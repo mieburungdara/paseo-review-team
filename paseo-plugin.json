@@ -1,0 +1,10 @@
+{
+  "id": "review-team",
+  "name": "Review Team",
+  "description": "Ruang review multi-agen: satu ketua memimpin beberapa reviewer paralel, mengoordinasikan temuan, dan menyusun laporan akhir. Coverage dihitung dari agen reviewer yang benar-benar berjalan.",
+  "icon": "assets/icon.png",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.12.0"
+  }
+}
