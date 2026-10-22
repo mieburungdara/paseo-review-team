@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { PRESET_ID_PATTERN, PresetClientConfigSchema } from "./presets";
 
 export const FindingSchema = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -62,6 +63,7 @@ export type ReviewEvent = z.infer<typeof EventSchema>;
 
 export const ReviewSessionSchema = z.object({
   id: z.string(),
+  presetId: z.string().max(40).default("code"),
   workspaceId: z.string().nullable(),
   workspaceName: z.string().nullable(),
   target: z.string(),
@@ -110,6 +112,7 @@ export const ProviderOptionSchema = z.object({
 });
 
 export const SetupDefaultsSchema = z.object({
+  presetId: z.string().max(40).default("code"),
   provider: z.string().nullable(),
   model: z.string().nullable(),
   lenses: z.array(z.string()),
@@ -129,6 +132,8 @@ export const stateGetRpc = defineRpc({
     agentToolsEnabled: z.boolean(),
     providers: z.array(ProviderOptionSchema),
     defaults: SetupDefaultsSchema,
+    presets: z.array(PresetClientConfigSchema).min(1),
+    presetWarnings: z.array(z.string()),
   }),
 });
 
@@ -142,6 +147,7 @@ export const sessionStartRpc = defineRpc({
   name: "review-team.session.start",
   input: z.object({
     workspaceId: z.string().min(1).max(200),
+    presetId: z.string().regex(PRESET_ID_PATTERN).optional(),
     target: z.string().trim().min(1).max(2000),
     lenses: z.array(z.string().min(1).max(40)).min(1).max(8),
     depth: z.enum(["quick", "standard", "deep"]),

@@ -3,6 +3,7 @@ export const PLUGIN_ID = "review-team";
 export const LABEL_SESSION = "review-team.session";
 export const LABEL_ROLE = "review-team.role";
 export const LABEL_LENS = "review-team.lens";
+export const LABEL_PRESET = "review-team.preset";
 
 export const ROLE_LEAD = "lead";
 export const ROLE_REVIEWER = "reviewer";

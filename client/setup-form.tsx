@@ -2,12 +2,16 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc, useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
-import { DEPTHS, LENSES, depthHint, lensHint, lensLabel } from "../shared/constants";
 import type { ReviewSession, ReviewTeamState } from "../shared/contracts";
 import { sessionStartRpc, toolsEnableRpc } from "../shared/contracts";
+import {
+  PRESET_DEPTH_IDS,
+  depthFor,
+  lensHintFor,
+  lensLabelFor,
+  type PresetDepthId,
+} from "../shared/presets";
 import { BodyText, Button, Card, Chip, Muted, SectionTitle } from "./components";
-
-type DepthId = (typeof DEPTHS)[number]["id"];
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -37,12 +41,17 @@ export function SetupForm({
   const enableTools = useRpc(toolsEnableRpc);
 
   const [target, setTarget] = useState("");
+  const [presetId, setPresetId] = useState(state.defaults.presetId);
   const [providerId, setProviderId] = useState<string | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
   const [lenses, setLenses] = useState<string[] | null>(null);
-  const [depth, setDepth] = useState<DepthId | null>(null);
+  const [depth, setDepth] = useState<PresetDepthId | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const preset =
+    state.presets.find((entry) => entry.id === presetId) ?? state.presets[0];
+  const presetIsDefault = preset.id === state.defaults.presetId;
 
   const provider =
     state.providers.find((entry) => entry.id === (providerId ?? state.defaults.provider)) ??
@@ -55,11 +64,12 @@ export function SetupForm({
     null;
 
   const selectedLenses = useMemo(() => {
-    const raw = lenses ?? state.defaults.lenses;
-    return raw.filter((lens) => LENSES.some((entry) => entry.id === lens));
-  }, [lenses, state.defaults.lenses]);
+    const raw = lenses ?? (presetIsDefault ? state.defaults.lenses : preset.defaultLensIds);
+    const allowed = new Set(preset.lenses.map((lens) => lens.id));
+    return raw.filter((lens) => allowed.has(lens));
+  }, [lenses, presetIsDefault, preset, state.defaults.lenses]);
 
-  const selectedDepth = depth ?? state.defaults.depth;
+  const selectedDepth = depth ?? (presetIsDefault ? state.defaults.depth : "standard");
   const trimmedTarget = target.trim();
   const canStart =
     state.agentToolsEnabled &&
@@ -91,9 +101,17 @@ export function SetupForm({
     [theme, compact],
   );
 
+  function selectPreset(nextId: string) {
+    if (nextId === preset.id) return;
+    setPresetId(nextId);
+    setLenses(null);
+    setDepth(null);
+    setError(null);
+  }
+
   function toggleLens(lens: string) {
     setLenses((current) => {
-      const base = current ?? state.defaults.lenses;
+      const base = current ?? selectedLenses;
       return base.includes(lens) ? base.filter((entry) => entry !== lens) : [...base, lens];
     });
   }
@@ -121,6 +139,7 @@ export function SetupForm({
     try {
       const result = await startSession({
         workspaceId,
+        presetId: preset.id,
         target: trimmedTarget,
         lenses: selectedLenses,
         depth: selectedDepth,
@@ -140,11 +159,13 @@ export function SetupForm({
       <Card theme={theme}>
         <SectionTitle theme={theme}>Mulai review tim</SectionTitle>
         <Muted theme={theme}>
-          Satu agen lead memimpin beberapa reviewer paralel di workspace{" "}
+          Satu agen bertindak sebagai {preset.roles.lead} dan memimpin{" "}
+          {preset.roles.reviewerPlural} paralel di workspace{" "}
           <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>
             {workspace?.name ?? workspaceId}
           </Text>
-          . Reviewer hanya melapor ke lead; lead yang menggabungkan temuan.
+          . {preset.roles.reviewer} hanya melapor ke {preset.roles.lead};{" "}
+          {preset.roles.lead} yang menggabungkan temuan.
         </Muted>
         {workspace?.directory ? (
           <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
@@ -154,18 +175,36 @@ export function SetupForm({
       </Card>
 
       <Card theme={theme}>
-        <SectionTitle theme={theme}>Target review</SectionTitle>
+        <SectionTitle theme={theme}>Preset review</SectionTitle>
+        <View style={styles.row}>
+          {state.presets.map((entry) => (
+            <Chip
+              key={entry.id}
+              disabled={busy}
+              label={entry.label}
+              onPress={() => selectPreset(entry.id)}
+              selected={preset.id === entry.id}
+              theme={theme}
+            />
+          ))}
+        </View>
+        <Muted theme={theme}>{preset.description}</Muted>
         <Muted theme={theme}>
-          Jelaskan apa yang harus diperiksa. Sebutkan diff, branch, PR, atau area kode yang
-          relevan agar reviewer tidak menebak.
+          {preset.source === "builtin" ? "Preset bawaan" : "Preset custom"} ·{" "}
+          {preset.lenses.length} lensa tersedia
         </Muted>
+      </Card>
+
+      <Card theme={theme}>
+        <SectionTitle theme={theme}>{preset.target.label}</SectionTitle>
+        <Muted theme={theme}>{preset.target.hint}</Muted>
         <TextInput
-          accessibilityLabel="Target review"
+          accessibilityLabel={preset.target.label}
           editable={!busy}
           maxLength={2000}
           multiline
           onChangeText={setTarget}
-          placeholder="mis. diff vs main, src/auth/login, atau PR #42"
+          placeholder={preset.target.placeholder}
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
           value={target}
@@ -173,12 +212,13 @@ export function SetupForm({
       </Card>
 
       <Card theme={theme}>
-        <SectionTitle theme={theme}>Lensa reviewer</SectionTitle>
+        <SectionTitle theme={theme}>Lensa review</SectionTitle>
         <Muted theme={theme}>
-          Setiap lensa menjadi satu reviewer. Pilih yang relevan; minimal satu.
+          Setiap lensa menjadi satu {preset.roles.reviewer.toLowerCase()}. Pilih yang relevan;
+          minimal satu.
         </Muted>
         <View style={styles.row}>
-          {LENSES.map((lens) => (
+          {preset.lenses.map((lens) => (
             <Chip
               key={lens.id}
               disabled={busy}
@@ -193,9 +233,9 @@ export function SetupForm({
           {selectedLenses.map((lens) => (
             <Muted key={lens} theme={theme}>
               <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>
-                {lensLabel(lens)}:{" "}
+                {lensLabelFor(preset, lens)}:{" "}
               </Text>
-              {lensHint(lens)}
+              {lensHintFor(preset, lens)}
             </Muted>
           ))}
         </View>
@@ -209,18 +249,18 @@ export function SetupForm({
       <Card theme={theme}>
         <SectionTitle theme={theme}>Kedalaman</SectionTitle>
         <View style={styles.row}>
-          {DEPTHS.map((entry) => (
+          {PRESET_DEPTH_IDS.map((id) => (
             <Chip
-              key={entry.id}
+              key={id}
               disabled={busy}
-              label={entry.label}
-              onPress={() => setDepth(entry.id)}
-              selected={selectedDepth === entry.id}
+              label={preset.depths[id].label}
+              onPress={() => setDepth(id)}
+              selected={selectedDepth === id}
               theme={theme}
             />
           ))}
         </View>
-        <Muted theme={theme}>{depthHint(selectedDepth)}</Muted>
+        <Muted theme={theme}>{depthFor(preset, selectedDepth).hint}</Muted>
       </Card>
 
       <Card theme={theme}>
@@ -273,9 +313,9 @@ export function SetupForm({
         <Card theme={theme} style={{ borderColor: theme.colors.statusWarning }}>
           <SectionTitle theme={theme}>Izin agent tools diperlukan</SectionTitle>
           <BodyText theme={theme}>
-            Lead membuat reviewer memakai alat agent Paseo (`create_agent`). Alat ini harus
-            diaktifkan pada setelan daemon, dan berlaku untuk agen baru. Plugin ini tidak
-            mengaktifkannya secara otomatis.
+            {preset.roles.lead} membuat {preset.roles.reviewer.toLowerCase()} memakai alat
+            agent Paseo (`create_agent`). Alat ini harus diaktifkan pada setelan daemon, dan
+            berlaku untuk agen baru. Plugin ini tidak mengaktifkannya secara otomatis.
           </BodyText>
           <Muted theme={theme}>
             Dengan menekan tombol di bawah, kamu mengizinkan plugin mengubah setelan
@@ -304,16 +344,21 @@ export function SetupForm({
       <View style={styles.column}>
         <Button
           disabled={!canStart}
-          label={busy ? "Memulai…" : `Mulai review (${selectedLenses.length} reviewer)`}
+          label={
+            busy
+              ? "Memulai…"
+              : `Mulai review (${selectedLenses.length} ${preset.roles.reviewer})`
+          }
           onPress={() => {
             void submit();
           }}
           theme={theme}
           variant="primary"
         />
+        <Muted theme={theme}>{preset.ui.startHint}</Muted>
         <Muted theme={theme}>
-          Review bersifat read-only lewat instruksi prompt, bukan sandbox. Lead dan reviewer
-          tetap memakai izin agen masing-masing.
+          Review bersifat read-only lewat instruksi prompt, bukan sandbox. {preset.roles.lead}{" "}
+          dan {preset.roles.reviewer.toLowerCase()} tetap memakai izin agen masing-masing.
         </Muted>
       </View>
     </View>

@@ -1,8 +1,12 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { lensLabel } from "../shared/constants";
 import type { Finding, Reviewer } from "../shared/contracts";
+import {
+  lensLabelFor,
+  type PresetClientConfig,
+  type PresetVerdictLabels,
+} from "../shared/presets";
 
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
 
@@ -93,26 +97,32 @@ export function SeverityBadge({ theme, severity }: { theme: PluginTheme; severit
   );
 }
 
+const DEFAULT_VERDICTS: Record<string, { label: string; tone: Tone }> = {
+  approve: { label: "APPROVE", tone: "success" },
+  request_changes: { label: "PERLU PERUBAHAN", tone: "warning" },
+  blocked: { label: "BLOCKED", tone: "danger" },
+  pass: { label: "PASS", tone: "success" },
+  warn: { label: "WARN", tone: "warning" },
+  fail: { label: "FAIL", tone: "danger" },
+};
+
 export function VerdictBadge({
   theme,
   verdict,
+  preset,
 }: {
   theme: PluginTheme;
-  verdict: "approve" | "request_changes" | "blocked" | "pass" | "warn" | "fail";
+  verdict: string;
+  preset?: Pick<PresetClientConfig, "labels"> | null;
 }) {
-  const map: Record<string, { label: string; tone: Tone }> = {
-    approve: { label: "APPROVE", tone: "success" },
-    request_changes: { label: "PERLU PERUBAHAN", tone: "warning" },
-    blocked: { label: "BLOCKED", tone: "danger" },
-    pass: { label: "PASS", tone: "success" },
-    warn: { label: "WARN", tone: "warning" },
-    fail: { label: "FAIL", tone: "danger" },
-  };
-  const entry = map[verdict];
-  const color = toneColor(theme, entry.tone);
+  const fallback = DEFAULT_VERDICTS[verdict];
+  const custom = preset?.labels.verdicts[verdict as keyof PresetVerdictLabels];
+  const color = toneColor(theme, fallback?.tone ?? "neutral");
   return (
     <View style={[badgeStyles.badge, { borderColor: color, backgroundColor: theme.colors.surface1 }]}>
-      <Text style={[badgeStyles.text, { color }]}>{entry.label}</Text>
+      <Text style={[badgeStyles.text, { color }]}>
+        {custom ?? fallback?.label ?? verdict.toUpperCase()}
+      </Text>
     </View>
   );
 }
@@ -348,12 +358,19 @@ export function CoverageBar({
 export function FindingsList({
   theme,
   findings,
+  preset,
 }: {
   theme: PluginTheme;
   findings: Finding[];
+  preset?: Pick<PresetClientConfig, "labels"> | null;
 }) {
+  const labels = preset?.labels;
   if (findings.length === 0) {
-    return <Muted theme={theme}>Tidak ada temuan terstruktur.</Muted>;
+    return (
+      <Muted theme={theme}>
+        Tidak ada {(labels?.findings ?? "temuan").toLowerCase()} terstruktur.
+      </Muted>
+    );
   }
   return (
     <View style={{ gap: 10 }}>
@@ -381,12 +398,12 @@ export function FindingsList({
           <BodyText theme={theme}>{finding.detail}</BodyText>
           {finding.file ? (
             <Text selectable style={{ color: theme.colors.accent, fontSize: 11 }}>
-              {finding.file}
+              {labels?.location ? `${labels.location}: ${finding.file}` : finding.file}
             </Text>
           ) : null}
           {finding.recommendation ? (
             <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
-              Saran: {finding.recommendation}
+              {labels?.recommendation ?? "Saran"}: {finding.recommendation}
             </Text>
           ) : null}
         </View>
@@ -398,22 +415,28 @@ export function FindingsList({
 export function ReviewerCard({
   theme,
   reviewer,
+  preset,
   onOpenAgent,
 }: {
   theme: PluginTheme;
   reviewer: Reviewer;
+  preset: PresetClientConfig;
   onOpenAgent?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const findingLabel = preset.labels.findings;
+  const findingLabelLower = findingLabel.toLowerCase();
   return (
     <Card theme={theme} style={{ gap: 8 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
           <Text style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: "700" }}>
-            {lensLabel(reviewer.lens)}
+            {lensLabelFor(preset, reviewer.lens)}
           </Text>
           <StatusBadge theme={theme} status={reviewer.status} />
-          {reviewer.verdict ? <VerdictBadge theme={theme} verdict={reviewer.verdict} /> : null}
+          {reviewer.verdict ? (
+            <VerdictBadge theme={theme} verdict={reviewer.verdict} preset={preset} />
+          ) : null}
         </View>
         {onOpenAgent ? (
           <Button theme={theme} label="Buka agen" onPress={onOpenAgent} compact />
@@ -423,7 +446,9 @@ export function ReviewerCard({
       {reviewer.summary ? <BodyText theme={theme}>{reviewer.summary}</BodyText> : null}
 
       <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
-        <Muted theme={theme}>{reviewer.findings.length} temuan</Muted>
+        <Muted theme={theme}>
+          {reviewer.findings.length} {findingLabelLower}
+        </Muted>
         {reviewer.reportFormat === "text" ? (
           <Muted theme={theme}>Format teks (JSON tidak valid)</Muted>
         ) : null}
@@ -432,7 +457,7 @@ export function ReviewerCard({
 
       {reviewer.findings.length > 0 ? (
         expanded ? (
-          <FindingsList findings={reviewer.findings} theme={theme} />
+          <FindingsList findings={reviewer.findings} preset={preset} theme={theme} />
         ) : (
           <View style={{ gap: 4 }}>
             {reviewer.findings.slice(0, 3).map((finding, index) => (
@@ -447,7 +472,9 @@ export function ReviewerCard({
               </View>
             ))}
             {reviewer.findings.length > 3 ? (
-              <Muted theme={theme}>+{reviewer.findings.length - 3} temuan lainnya.</Muted>
+              <Muted theme={theme}>
+                +{reviewer.findings.length - 3} {findingLabelLower} lainnya.
+              </Muted>
             ) : null}
           </View>
         )
@@ -456,7 +483,11 @@ export function ReviewerCard({
       {reviewer.findings.length > 3 ? (
         <Button
           theme={theme}
-          label={expanded ? "Sembunyikan temuan" : `Lihat semua temuan (${reviewer.findings.length})`}
+          label={
+            expanded
+              ? `Sembunyikan ${findingLabelLower}`
+              : `Lihat semua ${findingLabelLower} (${reviewer.findings.length})`
+          }
           onPress={() => setExpanded((value) => !value)}
           compact
         />

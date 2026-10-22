@@ -1,12 +1,14 @@
 {
   "name": "paseo-review-team",
-  "version": "1.0.0",
-  "description": "Paseo plugin for coordinated multi-agent code review with a lead, parallel reviewers, and a review room",
+  "version": "1.1.0",
+  "description": "Paseo plugin for coordinated multi-agent reviews with a lead, parallel reviewers, code and novel presets, and a review room",
   "license": "MIT",
   "keywords": [
     "paseo",
     "paseo-plugin",
     "code-review",
+    "novel-review",
+    "presets",
     "multi-agent"
   ],
   "repository": {
@@ -18,6 +20,7 @@
     "paseo-plugin.json",
     "npm-shrinkwrap.json",
     "OVERVIEW.md",
+    "examples/",
     "assets/",
     "index.client.tsx",
     "index.server.ts",

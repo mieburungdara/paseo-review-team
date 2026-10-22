@@ -11,6 +11,7 @@ let directory: string;
 function makeSession(id: string, updatedAt: string): ReviewSession {
   return {
     id,
+    presetId: "code",
     workspaceId: "workspace-1",
     workspaceName: "Demo",
     target: "C:/demo",
@@ -55,6 +56,7 @@ describe("SessionStore", () => {
     const store = new SessionStore(directory);
     await store.save(makeSession("session-a", "2026-01-01T00:00:00.000Z"));
     await store.saveDefaults({
+      presetId: "code",
       provider: "codex",
       model: "gpt-5",
       lenses: ["correctness", "security"],
@@ -65,11 +67,58 @@ describe("SessionStore", () => {
     await reopened.ensureLoaded();
     expect(reopened.get("session-a")?.workspaceName).toBe("Demo");
     expect(reopened.getDefaults()).toEqual({
+      presetId: "code",
       provider: "codex",
       model: "gpt-5",
       lenses: ["correctness", "security"],
       depth: "deep",
     });
+  });
+
+  it("defaults legacy sessions and defaults to the code preset", async () => {
+    const legacy = makeSession("legacy", "2026-01-01T00:00:00.000Z") as unknown as Record<
+      string,
+      unknown
+    >;
+    delete legacy.presetId;
+
+    await mkdir(join(directory, "sessions"), { recursive: true });
+    await writeFile(
+      join(directory, "sessions", "legacy.json"),
+      JSON.stringify(legacy),
+      "utf8",
+    );
+    await writeFile(
+      join(directory, "defaults.json"),
+      JSON.stringify({
+        provider: "codex",
+        model: "gpt-5",
+        lenses: ["correctness"],
+        depth: "standard",
+      }),
+      "utf8",
+    );
+
+    const store = new SessionStore(directory);
+    await store.ensureLoaded();
+    expect(store.get("legacy")?.presetId).toBe("code");
+    expect(store.getDefaults()?.presetId).toBe("code");
+    expect(store.getDefaults()?.lenses).toEqual(["correctness"]);
+  });
+
+  it("keeps a novel preset on a session", async () => {
+    const store = new SessionStore(directory);
+    const session = {
+      ...makeSession("novel-session", "2026-01-01T00:00:00.000Z"),
+      presetId: "novel",
+      lenses: ["plot", "character"],
+    };
+    await store.save(session);
+
+    const reopened = new SessionStore(directory);
+    await reopened.ensureLoaded();
+    expect(reopened.get("novel-session")?.presetId).toBe("novel");
+    expect(reopened.get("novel-session")?.lenses).toEqual(["plot", "character"]);
   });
 
   it("returns the latest session for a workspace", async () => {

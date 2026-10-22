@@ -6,14 +6,19 @@ import type {
 } from "@getpaseo/plugin/server";
 import {
   ENRICH_DELAY_MS,
+  LABEL_LENS,
   LABEL_ROLE,
   LABEL_SESSION,
-  LENSES,
   RECONCILE_INTERVAL_MS,
   ROLE_LEAD,
 } from "../shared/constants";
 import type { Reviewer, ReviewSession } from "../shared/contracts";
 import { buildConsolidationNudgeMessage } from "../shared/prompts";
+import {
+  resolvePreset,
+  reviewerLensId,
+  type PresetDefinition,
+} from "../shared/presets";
 import {
   parseFinalReport,
   parseLeadStatus,
@@ -29,6 +34,7 @@ import {
   sendToAgent,
   type AgentListEntry,
 } from "./agents";
+import { loadPresetCatalog } from "./presets";
 import { appendEvent, store, touchSession } from "./store";
 
 interface ResolvedAgent {
@@ -60,23 +66,6 @@ function nowIso(): string {
 
 function titleForAgent(agent: AgentLike): string | null {
   return agent.title?.trim() || null;
-}
-
-function parseLens(title: string | null): string {
-  if (!title) return "unknown";
-  const withoutPrefix = title.replace(/^Reviewer:\s*/i, "").trim();
-  const match = LENSES.find(
-    (lens) =>
-      lens.id === withoutPrefix.toLowerCase() ||
-      lens.label.toLowerCase() === withoutPrefix.toLowerCase(),
-  );
-  if (match) return match.id;
-  const slug = withoutPrefix
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return slug || "unknown";
 }
 
 async function resolveSessionForAgent(
@@ -131,19 +120,28 @@ function upsertReviewer(
   session: ReviewSession,
   agent: AgentLike,
   status: Reviewer["status"],
+  preset: PresetDefinition,
+  lensLabel?: string | null,
 ): { reviewer: Reviewer; created: boolean } {
+  const title = titleForAgent(agent);
+  const lens = reviewerLensId({
+    sessionLenses: session.lenses,
+    preset,
+    label: lensLabel,
+    title,
+  });
+
   const existing = findReviewer(session, agent.id);
   if (existing) {
-    const title = titleForAgent(agent);
     if (title && existing.title !== title) existing.title = title;
+    if (session.lenses.includes(lens) && existing.lens !== lens) existing.lens = lens;
     existing.lastSeenAt = nowIso();
     return { reviewer: existing, created: false };
   }
 
-  const title = titleForAgent(agent);
   const reviewer: Reviewer = {
     agentId: agent.id,
-    lens: parseLens(title),
+    lens,
     title,
     status,
     verdict: null,
@@ -473,6 +471,8 @@ export async function reconcileSession(
   lastReconcileAt.set(session.id, Date.now());
 
   try {
+    const catalog = await loadPresetCatalog();
+    const preset = resolvePreset(catalog.presets, session.presetId);
     const entries = await listSessionAgents(paseo, session.id, session.leadAgentId);
     const byId = new Map(entries.map((entry) => [entry.id, entry]));
 
@@ -487,7 +487,13 @@ export async function reconcileSession(
 
     for (const entry of entries) {
       if (entry.id === session.leadAgentId) continue;
-      const { reviewer, created } = upsertReviewer(session, entry, "starting");
+      const { reviewer, created } = upsertReviewer(
+        session,
+        entry,
+        "starting",
+        preset,
+        entry.labels[LABEL_LENS],
+      );
       const nextStatus = statusFromEntry(entry, created ? "starting" : reviewer.status);
       reviewer.status = nextStatus;
       reviewer.lastSeenAt = nowIso();
@@ -576,7 +582,26 @@ function handleAgentCreated(
         });
       }
     } else {
-      const { reviewer, created } = upsertReviewer(session, event.agent, "starting");
+      const catalog = await loadPresetCatalog();
+      const preset = resolvePreset(catalog.presets, session.presetId);
+      let lensLabel: string | null = null;
+      try {
+        const snapshot = await refreshAgent(paseo, event.agent.id);
+        lensLabel = snapshot?.labels?.[LABEL_LENS] ?? null;
+      } catch (error) {
+        console.warn(
+          `[review-team] could not read labels of ${event.agent.id}:`,
+          errorMessage(error),
+        );
+      }
+
+      const { reviewer, created } = upsertReviewer(
+        session,
+        event.agent,
+        "starting",
+        preset,
+        lensLabel,
+      );
       reviewer.status = "starting";
       if (created) {
         appendEvent(session, {

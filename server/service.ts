@@ -2,13 +2,18 @@ import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
-  DEFAULT_LENS_IDS,
+  LABEL_PRESET,
   LABEL_ROLE,
   LABEL_SESSION,
   MAX_MESSAGE_LENGTH,
   ROLE_LEAD,
 } from "../shared/constants";
 import type { ProviderOption, ReviewSession, SetupDefaults } from "../shared/contracts";
+import {
+  presetSummaries,
+  resolvePreset,
+  type PresetDefinition,
+} from "../shared/presets";
 import {
   buildLeadPrompt,
   buildOperatorMessage,
@@ -24,6 +29,7 @@ import {
   sendToAgent,
 } from "./agents";
 import { reconcileSession } from "./observer";
+import { loadPresetCatalog } from "./presets";
 import { appendEvent, store, touchSession } from "./store";
 
 const ACTIVE_STATUSES = new Set(["starting", "running", "needs_input"]);
@@ -35,7 +41,9 @@ function nowIso(): string {
 function defaultsFor(
   providers: ProviderOption[],
   saved: SetupDefaults | null,
+  presets: readonly PresetDefinition[],
 ): SetupDefaults {
+  const preset = resolvePreset(presets, saved?.presetId);
   const provider =
     (saved ? providers.find((entry) => entry.id === saved.provider) : undefined) ?? providers[0];
   const model = provider
@@ -44,11 +52,17 @@ function defaultsFor(
       provider.models[0])
     : undefined;
 
-  const savedLenses = (saved?.lenses ?? []).filter((lens) => lens.trim() !== "").slice(0, 8);
+  const allowed = new Set(preset.lenses.map((lens) => lens.id));
+  const savedLenses =
+    saved && saved.presetId === preset.id
+      ? Array.from(new Set(saved.lenses.filter((lens) => allowed.has(lens)))).slice(0, 8)
+      : [];
+
   return {
+    presetId: preset.id,
     provider: provider?.id ?? saved?.provider ?? null,
     model: model?.id ?? saved?.model ?? null,
-    lenses: savedLenses.length > 0 ? savedLenses : [...DEFAULT_LENS_IDS],
+    lenses: savedLenses.length > 0 ? savedLenses : [...preset.defaultLensIds],
     depth: saved?.depth ?? "standard",
   };
 }
@@ -112,17 +126,22 @@ export async function getState(
       })
     : [];
 
+  const catalog = await loadPresetCatalog();
+
   return {
     session,
     agentToolsEnabled,
     providers,
-    defaults: defaultsFor(providers, store.getDefaults()),
+    defaults: defaultsFor(providers, store.getDefaults(), catalog.presets),
+    presets: presetSummaries(catalog.presets),
+    presetWarnings: catalog.warnings,
   };
 }
 
 export async function startSession(
   input: {
     workspaceId: string;
+    presetId?: string;
     target: string;
     lenses: string[];
     depth: "quick" | "standard" | "deep";
@@ -134,6 +153,10 @@ export async function startSession(
   { paseo }: PluginHandlerContext,
 ) {
   await store.ensureLoaded();
+
+  const catalog = await loadPresetCatalog();
+  const preset = resolvePreset(catalog.presets, input.presetId);
+  const allowed = new Set(preset.lenses.map((lens) => lens.id));
 
   const agentTools = await readAgentTools(paseo);
   if (!agentTools) {
@@ -155,6 +178,12 @@ export async function startSession(
 
   const lenses = Array.from(new Set(input.lenses.map((lens) => lens.trim()).filter(Boolean)));
   if (lenses.length === 0) throw new Error("Pilih minimal satu lensa review.");
+  const unknown = lenses.filter((lens) => !allowed.has(lens));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Lensa ${unknown.join(", ")} tidak tersedia untuk preset "${preset.label}". Muat ulang panel lalu pilih ulang lensa.`,
+    );
+  }
 
   const { combined } = await validateProvider(paseo, input.providerId, input.modelId);
 
@@ -179,6 +208,7 @@ export async function startSession(
 
   const session: ReviewSession = {
     id: sessionId,
+    presetId: preset.id,
     workspaceId: actualWorkspaceId,
     workspaceName,
     target: input.target,
@@ -214,7 +244,7 @@ export async function startSession(
 
   appendEvent(session, {
     kind: "session",
-    message: `Sesi review dimulai untuk ${workspaceName} dengan ${lenses.length} lensa.`,
+    message: `Sesi ${preset.label} dimulai untuk ${workspaceName} dengan ${lenses.length} lensa.`,
     agentId: null,
     lens: null,
   });
@@ -228,6 +258,7 @@ export async function startSession(
       lenses,
       depth: input.depth,
       provider: combined,
+      preset,
     });
 
     const lead = await workspace.agents.create({
@@ -240,6 +271,7 @@ export async function startSession(
       labels: {
         [LABEL_SESSION]: sessionId,
         [LABEL_ROLE]: ROLE_LEAD,
+        [LABEL_PRESET]: preset.id,
       },
       prompt,
     });
@@ -260,6 +292,7 @@ export async function startSession(
 
     await store
       .saveDefaults({
+        presetId: preset.id,
         provider: input.providerId,
         model: input.modelId,
         lenses,

@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "game-design",
+      "label": "Game Design Review",
+      "description": "Review dokumen desain game dari lensa balance, narasi, dan UX, dengan catatan yang berorientasi pada pengalaman pemain.",
+      "target": {
+        "label": "Dokumen desain",
+        "hint": "Tunjuk path dokumen GDD atau bagian yang perlu ditinjau. Sertakan referensi sistem lain bila relevan.",
+        "placeholder": "mis. docs/gdd/combat.md atau bagian ekonomi"
+      },
+      "lenses": [
+        {
+          "id": "balance",
+          "label": "Balance",
+          "hint": "Angka, ekonomi, progresi, dan loop permainan."
+        },
+        {
+          "id": "narrative",
+          "label": "Narasi",
+          "hint": "Alur cerita, motivasi pemain, dan konsistensi dunia."
+        },
+        {
+          "id": "ux",
+          "label": "UX",
+          "hint": "Beban kognitif, kejelasan instruksi, dan alur pemain."
+        }
+      ],
+      "defaultLensIds": ["balance", "narrative"],
+      "depths": {
+        "quick": {
+          "label": "Cepat",
+          "hint": "Satu bagian dokumen dan kesan pemain terbesar.",
+          "guidance": "Read only the section named in the brief. Do not audit the whole design; note any dependency you could not check as unverified."
+        },
+        "standard": {
+          "label": "Standar",
+          "hint": "Dokumen target dan sistem yang langsung terkait.",
+          "guidance": "Read the target document plus the systems it directly references. Follow one dependency outward when it changes the assessment."
+        },
+        "deep": {
+          "label": "Mendalam",
+          "hint": "Dokumen target, referensi, dan dampaknya ke loop permainan.",
+          "guidance": "Trace the target system, its references, and related player loops. Stop when the remaining uncertainty is documented."
+        }
+      },
+      "roles": {
+        "lead": "Ketua",
+        "reviewer": "Peninjau",
+        "reviewerPlural": "para peninjau"
+      },
+      "labels": {
+        "findings": "Temuan",
+        "location": "Bagian",
+        "recommendation": "Saran",
+        "verdicts": {
+          "approve": "SIAP",
+          "request_changes": "REVISI",
+          "blocked": "TERTAHAN",
+          "pass": "LULUS",
+          "warn": "CATATAN",
+          "fail": "GAGAL"
+        }
+      },
+      "ui": {
+        "startHint": "Peninjau akan membaca dokumen desain dan referensinya di workspace."
+      },
+      "prompt": {
+        "leadRole": "You are the lead of a Paseo game design review team. You coordinate a small group of reviewer agents and produce one consolidated design review. You are the hub: reviewers cannot message each other, so relay anything that crosses lenses.",
+        "leadRules": [
+          "This is a read-only review. Never edit, create, delete, or rename design files, and never run commands that modify the workspace.",
+          "Create exactly one reviewer for each lens listed above, using Paseo's `create_agent` tool. Do not create extra agents, worktrees, or workspaces.",
+          "Read the target document yourself before briefing reviewers, so each brief names concrete sections or systems.",
+          "Reviewers report only to you. When one lens's finding affects another lens, send the relevant context to that reviewer with `send_agent_prompt`.",
+          "Never approve a permission request on your own. If a reviewer is blocked by a permission, ask the operator in your status note."
+        ],
+        "reviewerRole": "You are a reviewer on a Paseo game design review team. You work independently and report to the lead.",
+        "reviewerRules": [
+          "Read-only. Never edit, create, delete, or rename files in the workspace.",
+          "Inspect the target document yourself. Do not trust a summary from the lead or a previous report.",
+          "Treat the named document and its direct references as the only scope.",
+          "Focus on player experience and design coherence, not personal taste.",
+          "If a finding belongs to another lens, mention it once and leave the depth to that reviewer."
+        ],
+        "evidenceRules": [
+          "Support every finding with a section reference and a short quote or close paraphrase. If a claim depends on material you could not read, mark it unverified or omit it."
+        ],
+        "consolidationFocus": [
+          "Wait until every lens has a usable report or has explicitly failed.",
+          "Merge overlapping notes across lenses and prioritise by impact on the player.",
+          "Do not add findings the reviewers did not support. You may add a cross-cutting note only if you verified it yourself, and label it as lead-verified."
+        ],
+        "verdictGuidance": "Use `approve` only when the design is coherent and no high-impact issue remains. Use `request_changes` when any high or medium issue needs revision before implementation. Use `blocked` when the review itself could not be completed.",
+        "locationExample": "Bagian 2.3 atau null",
+        "reportLanguage": "Indonesian"
+      }
+    }
+  ]
+}

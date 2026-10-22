@@ -4,8 +4,13 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { LENSES, PANEL_REFRESH_MS, depthHint, lensLabel } from "../shared/constants";
+import { PANEL_REFRESH_MS } from "../shared/constants";
 import type { ReviewSession, ReviewTeamState } from "../shared/contracts";
+import {
+  depthFor,
+  lensLabelFor,
+  type PresetClientConfig,
+} from "../shared/presets";
 import {
   leadSendRpc,
   requestReportRpc,
@@ -233,6 +238,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
   }
 
   const state = stateQuery.data;
+  const sessionPreset =
+    state.presets.find((entry) => entry.id === (session?.presetId ?? "code")) ??
+    state.presets[0];
   const setupVisible =
     showSetup ||
     !session ||
@@ -260,9 +268,25 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
           />
         </Card>
       ) : null}
+      {state.presetWarnings.length > 0 ? (
+        <Card theme={theme} style={{ borderColor: theme.colors.statusWarning }}>
+          <SectionTitle theme={theme}>Preset custom bermasalah</SectionTitle>
+          {state.presetWarnings.map((warning) => (
+            <Text
+              key={warning}
+              selectable
+              style={{ color: theme.colors.statusWarning, fontSize: 12, lineHeight: 18 }}
+            >
+              {warning}
+            </Text>
+          ))}
+        </Card>
+      ) : null}
       {setupVisible ? (
         <>
-          {session ? <PastSessionCard session={session} theme={theme} /> : null}
+          {session ? (
+            <PastSessionCard preset={sessionPreset} session={session} theme={theme} />
+          ) : null}
           {session && showSetup && session.phase === "complete" ? (
             <View style={styles.row}>
               <Button
@@ -299,7 +323,8 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 </Text>
                 <Muted theme={theme}>
                   {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
-                  {session.provider} · {session.depth}
+                  {sessionPreset.label} · {session.provider} ·{" "}
+                  {depthFor(sessionPreset, session.depth).label}
                 </Muted>
                 <Muted theme={theme}>
                   Mulai {formatClock(session.createdAt)} · aktivitas terakhir{" "}
@@ -363,8 +388,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             <Card theme={theme} style={{ borderColor: theme.colors.statusDanger }}>
               <SectionTitle theme={theme}>Hentikan sesi review?</SectionTitle>
               <BodyText theme={theme}>
-                Lead akan diinterupsi dan tidak diminta menyusun laporan akhir. Pekerjaan
-                reviewer yang sudah selesai tetap tersimpan di panel ini.
+                {sessionPreset.roles.lead} akan diinterupsi dan tidak diminta menyusun laporan
+                akhir. Pekerjaan {sessionPreset.roles.reviewerPlural} yang sudah selesai tetap
+                tersimpan di panel ini.
               </BodyText>
               <View style={styles.row}>
                 <Chip
@@ -427,7 +453,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 
           <Card theme={theme}>
             <View style={styles.spread}>
-              <SectionTitle theme={theme}>Lead</SectionTitle>
+              <SectionTitle theme={theme}>{sessionPreset.roles.lead}</SectionTitle>
               <View style={styles.row}>
                 {session.leadState ? (
                   <StatusBadge status={session.leadState} theme={theme} />
@@ -439,7 +465,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 {navigation && session.leadAgentId ? (
                   <Button
                     compact
-                    label="Buka agen lead"
+                    label={`Buka agen ${sessionPreset.roles.lead.toLowerCase()}`}
                     onPress={() => navigation.openAgent({ agentId: session.leadAgentId! })}
                     theme={theme}
                   />
@@ -449,7 +475,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             {session.leadNote ? (
               <BodyText theme={theme}>{session.leadNote}</BodyText>
             ) : (
-              <Muted theme={theme}>Belum ada catatan status dari lead.</Muted>
+              <Muted theme={theme}>
+                Belum ada catatan status dari {sessionPreset.roles.lead.toLowerCase()}.
+              </Muted>
             )}
             {session.pendingPermissions.length > 0 ? (
               <View
@@ -472,15 +500,17 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 
           <Card theme={theme}>
             <View style={styles.spread}>
-              <SectionTitle theme={theme}>Reviewer ({session.reviewers.length})</SectionTitle>
+              <SectionTitle theme={theme}>
+                {sessionPreset.roles.reviewer} ({session.reviewers.length})
+              </SectionTitle>
               <Muted theme={theme}>
                 {session.coverage.completed}/{session.coverage.total} laporan terkumpul
               </Muted>
             </View>
             {session.reviewers.length === 0 ? (
               <Muted theme={theme}>
-                Lead belum membuat reviewer. Ini bisa memakan waktu beberapa detik setelah sesi
-                dimulai.
+                {sessionPreset.roles.lead} belum membuat {sessionPreset.roles.reviewerPlural}.
+                Ini bisa memakan waktu beberapa detik setelah sesi dimulai.
               </Muted>
             ) : (
               <View style={{ gap: 10 }}>
@@ -492,6 +522,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                         ? () => navigation.openAgent({ agentId: reviewer.agentId })
                         : undefined
                     }
+                    preset={sessionPreset}
                     reviewer={reviewer}
                     theme={theme}
                   />
@@ -504,7 +535,13 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             <Card theme={theme}>
               <View style={styles.spread}>
                 <SectionTitle theme={theme}>Hasil konsolidasi</SectionTitle>
-                {session.verdict ? <VerdictBadge theme={theme} verdict={session.verdict} /> : null}
+                {session.verdict ? (
+                  <VerdictBadge
+                    preset={sessionPreset}
+                    theme={theme}
+                    verdict={session.verdict}
+                  />
+                ) : null}
               </View>
               {session.finalSummary ? (
                 <BodyText theme={theme}>{session.finalSummary}</BodyText>
@@ -512,9 +549,16 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 <Muted theme={theme}>Lead belum mengirim ringkasan akhir yang terbaca.</Muted>
               )}
               {session.findings.length > 0 ? (
-                <FindingsList findings={session.findings} theme={theme} />
+                <FindingsList
+                  findings={session.findings}
+                  preset={sessionPreset}
+                  theme={theme}
+                />
               ) : (
-                <Muted theme={theme}>Tidak ada temuan pada laporan konsolidasi.</Muted>
+                <Muted theme={theme}>
+                  Tidak ada {sessionPreset.labels.findings.toLowerCase()} pada laporan
+                  konsolidasi.
+                </Muted>
               )}
               {session.finalReport ? (
                 <>
@@ -541,18 +585,20 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 
           {session.status !== "stopped" && session.leadAgentId ? (
             <Card theme={theme}>
-              <SectionTitle theme={theme}>Pesan ke lead</SectionTitle>
+              <SectionTitle theme={theme}>
+                Pesan ke {sessionPreset.roles.lead.toLowerCase()}
+              </SectionTitle>
               <Muted theme={theme}>
                 Gunakan untuk mengarahkan ulang review, meminta fokus tambahan, atau menanyakan
                 temuan. Permintaan izin tidak disetujui dari sini.
               </Muted>
               <TextInput
-                accessibilityLabel="Pesan untuk lead"
+                accessibilityLabel={`Pesan untuk ${sessionPreset.roles.lead.toLowerCase()}`}
                 editable={busy === null}
                 maxLength={4000}
                 multiline
                 onChangeText={setDraft}
-                placeholder="mis. fokuskan ulang pada handler autentikasi"
+                placeholder={`Arahan untuk ${sessionPreset.roles.lead.toLowerCase()}…`}
                 placeholderTextColor={theme.colors.foregroundMuted}
                 style={styles.input}
                 value={draft}
@@ -560,7 +606,11 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
               <View style={styles.row}>
                 <Button
                   disabled={busy !== null || draft.trim().length === 0}
-                  label={busy === "send" ? "Mengirim…" : "Kirim ke lead"}
+                  label={
+                    busy === "send"
+                      ? "Mengirim…"
+                      : `Kirim ke ${sessionPreset.roles.lead.toLowerCase()}`
+                  }
                   onPress={() => {
                     void handleSend();
                   }}
@@ -600,7 +650,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                           flexShrink: 1,
                         }}
                       >
-                        {event.lens ? `${lensLabel(event.lens)}: ` : ""}
+                        {event.lens ? `${lensLabelFor(sessionPreset, event.lens)}: ` : ""}
                         {event.message}
                       </Text>
                     </View>
@@ -611,8 +661,8 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 
           <Muted theme={theme}>
             Review berjalan read-only lewat prompt. Izin agen tetap ditinjau manual di Paseo.
-            Lensa tersedia: {LENSES.map((lens) => lens.label).join(", ")}. Kedalaman:{" "}
-            {depthHint(session.depth)}.
+            Lensa tersedia: {sessionPreset.lenses.map((lens) => lens.label).join(", ")}.
+            Kedalaman: {depthFor(sessionPreset, session.depth).hint}
           </Muted>
         </>
       ) : null}
@@ -623,20 +673,24 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 function PastSessionCard({
   theme,
   session,
+  preset,
 }: {
   theme: PluginTheme;
   session: ReviewSession;
+  preset: PresetClientConfig;
 }) {
   return (
     <Card theme={theme}>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <SectionTitle theme={theme}>Sesi terakhir</SectionTitle>
         <PhaseBadge phase={session.phase} theme={theme} />
-        {session.verdict ? <VerdictBadge theme={theme} verdict={session.verdict} /> : null}
+        {session.verdict ? (
+          <VerdictBadge preset={preset} theme={theme} verdict={session.verdict} />
+        ) : null}
       </View>
       <BodyText theme={theme}>{session.target}</BodyText>
       <Muted theme={theme}>
-        {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
+        {preset.label} · {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
         {session.coverage.completed}/{session.coverage.total} laporan ·{" "}
         {session.createdAt ? formatClock(session.createdAt) : ""}
       </Muted>

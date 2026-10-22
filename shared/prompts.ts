@@ -1,16 +1,20 @@
 import {
-  depthHint,
   FINDINGS_FENCE,
   FINAL_FENCE,
   LABEL_LENS,
+  LABEL_PRESET,
   LABEL_ROLE,
   LABEL_SESSION,
-  lensHint,
-  lensLabel,
   REPORT_BEGIN,
   REPORT_END,
   ROLE_REVIEWER,
 } from "./constants";
+import {
+  depthFor,
+  lensHintFor,
+  lensLabelFor,
+  type PresetDefinition,
+} from "./presets";
 
 export interface LeadPromptInput {
   sessionId: string;
@@ -19,31 +23,31 @@ export interface LeadPromptInput {
   lenses: string[];
   depth: string;
   provider: string;
+  preset: PresetDefinition;
 }
 
-const DEPTH_GUIDANCE: Record<string, string> = {
-  quick:
-    "Keep it to one pass over the changed files or the entry points named in the brief. Do not chase distant call sites; note them as unverified if they matter.",
-  standard:
-    "Inspect the main path, its immediate dependencies, and the error path. Follow one call site outward when it changes the verdict.",
-  deep:
-    "Trace the full flow, call sites, configuration, and boundary scenarios. You may follow up to two chains of evidence, but stop when the remaining uncertainty is documented.",
-};
+function bullets(lines: string[]): string[] {
+  return lines.map((line) => `- ${line}`);
+}
 
 export function buildLeadPrompt(input: LeadPromptInput): string {
+  const { preset } = input;
+  const depth = depthFor(preset, input.depth);
   const lensLines = input.lenses.map(
-    (lens) => `- ${lensLabel(lens)} (\`${lens}\`): ${lensHint(lens)}`,
+    (lens) => `- ${lensLabelFor(preset, lens)} (\`${lens}\`): ${lensHintFor(preset, lens)}`,
   );
   const lensList = input.lenses.join(", ");
+  const location = preset.prompt.locationExample;
 
   const lines = [
-    "You are the lead of a Paseo Review Team session. You coordinate a small group of reviewer agents and produce one consolidated review. You are the hub: reviewers cannot message each other, so relay anything that crosses lenses.",
+    preset.prompt.leadRole,
     "",
     "## Session",
     `- Session id: ${input.sessionId}`,
+    `- Preset: ${preset.label} (\`${preset.id}\`)`,
     `- Target: ${input.target}`,
     `- Paseo workspace id: ${input.workspaceId}`,
-    `- Depth: ${input.depth}`,
+    `- Depth: ${depth.label} (\`${input.depth}\`). ${depth.guidance}`,
     `- Lenses: ${lensList}`,
     `- Provider/model for you and every reviewer: ${input.provider}`,
     "",
@@ -51,43 +55,30 @@ export function buildLeadPrompt(input: LeadPromptInput): string {
     ...lensLines,
     "",
     "## Rules",
-    "- This is a read-only review. Never edit, create, delete, rename, or format files, and never run commands that modify the repository or its dependencies.",
-    "- Create exactly one reviewer for each lens listed above, using Paseo's `create_agent` tool. Do not create extra agents, worktrees, or workspaces.",
-    "- Do not create a reviewer for a lens that already has a live reviewer. If a reviewer is archived or failed, you may replace it once for the same lens.",
-    "- Inspect the target yourself before briefing reviewers, so each brief names concrete files or flows. Do not trust a reviewer's summary without checking the evidence it cites.",
-    "- Start all reviewers promptly; they should work in parallel.",
-    "- Paseo notifies you when a reviewer finishes. Treat that notification as the signal to read its findings. You may use `get_agent_status` and `get_agent_activity` to check progress.",
-    "- Reviewers report only to you. When one lens's finding affects another lens, send the relevant context to that reviewer with `send_agent_prompt`. Do not expect reviewers to talk to each other directly.",
-    "- Never approve a permission request on your own. If a reviewer is blocked by a permission, ask the operator in your status note and continue with the other lenses.",
-    "- Do not ask the operator for confirmation to start; the session was already approved.",
+    ...bullets(preset.prompt.leadRules),
     "",
     "## Creating a reviewer",
     "Call `create_agent` once per lens with:",
     '- `workspaceId`: the Paseo workspace id above (so the reviewer lives beside the target, not in your home).',
-    '- `title`: `Reviewer: <lens>` using the human lens name.',
+    '- `title`: `Reviewer: <lens>` using the human lens name. Keep the `Reviewer:` prefix exactly; the plugin uses it to match the agent.',
     `- \`provider\`: \`${input.provider}\`.`,
     "- `initialPrompt`: the reviewer brief below, with every placeholder replaced. Keep it complete; do not shorten it.",
-    `- \`labels\`: \`{"${LABEL_SESSION}": "${input.sessionId}", "${LABEL_ROLE}": "${ROLE_REVIEWER}", "${LABEL_LENS}": "<lens id>"}\`.`,
+    `- \`labels\`: \`{"${LABEL_SESSION}": "${input.sessionId}", "${LABEL_ROLE}": "${ROLE_REVIEWER}", "${LABEL_LENS}": "<lens id>", "${LABEL_PRESET}": "${preset.id}"}\`.`,
     "- `notifyOnFinish`: `true`.",
     "",
     "Reviewers cannot see this conversation, so the brief must stand alone.",
     "",
     "## Reviewer brief template",
     "---",
-    "You are a reviewer on a Paseo Review Team. You work independently and report to the lead.",
+    preset.prompt.reviewerRole,
     "",
     "Lens: {{LENS_LABEL}} ({{LENS_ID}}). Focus: {{LENS_HINT}}",
     "Target: {{TARGET}}",
     "Depth: {{DEPTH}}. {{DEPTH_GUIDANCE}}",
     "",
     "Rules:",
-    "- Read-only. Never edit, create, delete, rename, or format files, and never run commands that modify the repository or its dependencies. Read, search, and inspect.",
-    "- Do not create other agents, worktrees, or workspaces.",
-    "- Inspect the target yourself. Do not trust a summary from the lead or from a previous report; verify the evidence.",
-    "- Treat the target directory as the only scope. Do not review unrelated projects.",
-    "- Report only findings you can support with a concrete file/line, command output, or a clear reproduction path. If you cannot support it, say it is unverified or omit it.",
-    "- Prefer a few high-signal findings over a long list. Do not report style preferences unless the target has an explicit convention.",
-    "- If a finding belongs to another lens, mention it once and leave the depth to that reviewer.",
+    ...bullets(preset.prompt.reviewerRules),
+    ...bullets(preset.prompt.evidenceRules),
     "",
     "Progress and report format:",
     "- End every assistant turn with one status line:",
@@ -95,9 +86,10 @@ export function buildLeadPrompt(input: LeadPromptInput): string {
     "- When you are finished, output this block exactly once, after your prose:",
     "REVIEW_REPORT: DONE|BLOCKED|FAILED",
     "```" + FINDINGS_FENCE,
-    '{"lens":"{{LENS_ID}}","verdict":"pass|warn|fail","summary":"...","findings":[{"severity":"high|medium|low","title":"...","detail":"...","file":"path:line or null","recommendation":"..."}]}',
+    `{"lens":"{{LENS_ID}}","verdict":"pass|warn|fail","summary":"...","findings":[{"severity":"high|medium|low","title":"...","detail":"...","file":"${location}","recommendation":"..."}]}`,
     "```",
     "- The JSON must be valid. Use verdict `pass` with an empty findings array when you found nothing material.",
+    `- Write the summary, finding titles, details, and recommendations in ${preset.prompt.reportLanguage}. Keep the JSON keys and the fixed marker values exactly as shown.`,
     "- If you are blocked, still include the JSON block when possible and explain the blocker in the summary.",
     "- Do not wrap the report markers or the JSON block in other prose.",
     "---",
@@ -112,23 +104,22 @@ export function buildLeadPrompt(input: LeadPromptInput): string {
     "- FAILED: the session cannot continue.",
     "",
     "## Consolidation",
-    "- Wait until every lens has a usable report or has explicitly failed. If one reviewer is still running while the others are done, wait for it or note the gap; do not fabricate its findings.",
-    "- Deduplicate findings across lenses, rank by severity, and resolve contradictions by checking the evidence. Keep the strongest evidence for each finding.",
-    "- Do not add findings the reviewers did not support. You may add a missing cross-cutting finding only if you verified it yourself, and label it as lead-verified.",
-    `- Depth guidance for this session: ${DEPTH_GUIDANCE[input.depth] ?? depthHint(input.depth)}`,
+    ...bullets(preset.prompt.consolidationFocus),
+    `- Depth guidance for this session: ${depth.guidance}`,
     "",
     "## Final report",
     "When the review is complete, emit exactly one block between the sentinels. Nothing inside the sentinels except the verdict line and the fenced JSON block:",
     REPORT_BEGIN,
     "REVIEW_VERDICT: approve|request_changes|blocked",
     "```" + FINAL_FENCE,
-    '{"summary":"...","findings":[{"severity":"high|medium|low","title":"...","detail":"...","file":"path:line or null","recommendation":"..."}]}',
+    `{"summary":"...","findings":[{"severity":"high|medium|low","title":"...","detail":"...","file":"${location}","recommendation":"..."}]}`,
     "```",
     REPORT_END,
     "",
-    "Use `approve` only when no material issue remains. Use `request_changes` for any high or medium finding that should block merging. Use `blocked` when the review itself could not be completed. Keep the summary short and concrete; the operator will read it first.",
+    preset.prompt.verdictGuidance,
+    `Write the final summary, findings, and recommendations in ${preset.prompt.reportLanguage}; keep the JSON keys and verdict values exactly as shown.`,
     "",
-    "The operator's UI is in Indonesian. Reply to direct operator messages in Indonesian unless they use another language. Internal reviewer briefs and reports stay in English for consistent parsing.",
+    "The operator's UI is in Indonesian. Reply to direct operator messages in Indonesian unless they use another language.",
   ];
 
   return lines.join("\n");
