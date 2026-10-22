@@ -11,7 +11,7 @@ export default function contribute(client: PluginClientContext) {
   });
 
   const removeCommand = client.addCommandCenterItem({
-    id: "review-team.open",
+    id: "review-team-open",
     title: "Buka Review Team",
     icon: "Users",
     keywords: ["review", "reviewer", "team", "multi-agent", "lensa"],
