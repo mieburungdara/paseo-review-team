@@ -9,8 +9,11 @@ import type { ReviewSession, ReviewTeamState } from "../shared/contracts";
 import {
   depthFor,
   lensLabelFor,
+  translatorLabelFor,
+  translatorPluralFor,
   type PresetClientConfig,
 } from "../shared/presets";
+import { translationProgress } from "../shared/translation";
 import {
   leadSendRpc,
   requestReportRpc,
@@ -30,12 +33,13 @@ import {
   ReviewerCard,
   SectionTitle,
   StatusBadge,
+  TranslatorCard,
   VerdictBadge,
   formatClock,
 } from "./components";
 import { SetupForm } from "./setup-form";
 
-const ACTIVE_PHASES = new Set(["starting", "reviewing", "consolidating"]);
+const ACTIVE_PHASES = new Set(["starting", "translating", "reviewing", "consolidating"]);
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -246,6 +250,8 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
     !session ||
     session.status === "stopped" ||
     session.status === "failed";
+  const translation =
+    session?.task === "translate" ? translationProgress(session.translators) : null;
 
   return (
     <ScrollView
@@ -326,13 +332,19 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                   {sessionPreset.label} · {session.provider} ·{" "}
                   {depthFor(sessionPreset, session.depth).label}
                 </Muted>
+                {session.task === "translate" && session.translation ? (
+                  <Muted theme={theme}>
+                    {session.translation.sourceLanguage} → {session.translation.targetLanguage} ·{" "}
+                    Folder hasil: {session.translation.outputDir}
+                  </Muted>
+                ) : null}
                 <Muted theme={theme}>
                   Mulai {formatClock(session.createdAt)} · aktivitas terakhir{" "}
                   {formatClock(session.lastActivityAt)}
                 </Muted>
               </View>
               <View style={styles.row}>
-                <PhaseBadge phase={session.phase} theme={theme} />
+                <PhaseBadge phase={session.phase} task={session.task} theme={theme} />
                 {session.phase !== "complete" ? (
                   <StatusBadge status={session.status} theme={theme} />
                 ) : null}
@@ -341,6 +353,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             <CoverageBar
               completed={session.coverage.completed}
               theme={theme}
+              title={session.task === "translate" ? "Coverage QA" : undefined}
               total={session.coverage.total}
             />
             <View style={styles.row}>
@@ -375,7 +388,7 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
               {session.phase === "complete" || session.status === "stopped" ? (
                 <Button
                   compact
-                  label="Review baru"
+                  label={session.task === "translate" ? "Terjemahan baru" : "Review baru"}
                   onPress={() => setShowSetup(true)}
                   theme={theme}
                   variant="primary"
@@ -386,11 +399,15 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
 
           {confirmStop ? (
             <Card theme={theme} style={{ borderColor: theme.colors.statusDanger }}>
-              <SectionTitle theme={theme}>Hentikan sesi review?</SectionTitle>
+              <SectionTitle theme={theme}>
+                Hentikan sesi {session.task === "translate" ? "terjemahan" : "review"}?
+              </SectionTitle>
               <BodyText theme={theme}>
                 {sessionPreset.roles.lead} akan diinterupsi dan tidak diminta menyusun laporan
-                akhir. Pekerjaan {sessionPreset.roles.reviewerPlural} yang sudah selesai tetap
-                tersimpan di panel ini.
+                akhir.{" "}
+                {session.task === "translate"
+                  ? `Pekerjaan ${translatorPluralFor(sessionPreset)} dan ${sessionPreset.roles.reviewerPlural} yang sudah selesai tetap tersimpan; berkas hasil di folder output tidak dihapus.`
+                  : `Pekerjaan ${sessionPreset.roles.reviewerPlural} yang sudah selesai tetap tersimpan di panel ini.`}
               </BodyText>
               <View style={styles.row}>
                 <Chip
@@ -498,6 +515,57 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             ) : null}
           </Card>
 
+          {session.task === "translate" && translation ? (
+            <Card theme={theme}>
+              <View style={styles.spread}>
+                <SectionTitle theme={theme}>
+                  {translatorPluralFor(sessionPreset)} ({session.translators.length})
+                </SectionTitle>
+                <Muted theme={theme}>
+                  {translation.done}/{translation.total} unit selesai
+                </Muted>
+              </View>
+              <CoverageBar
+                completed={translation.done}
+                theme={theme}
+                title="Progres terjemahan"
+                total={translation.total}
+                unit="unit"
+              />
+              <Muted theme={theme}>
+                Total mengikuti unit yang ditemukan dari agen penerjemah, bukan perkiraan jumlah
+                bab. {translation.running} berjalan · {translation.blocked} terhambat ·{" "}
+                {translation.failed} gagal.
+              </Muted>
+              {session.translators.length === 0 ? (
+                <Muted theme={theme}>
+                  {sessionPreset.roles.lead} sedang menyiapkan batch{" "}
+                  {translatorLabelFor(sessionPreset).toLowerCase()} pertama. Ini bisa memakan
+                  waktu beberapa detik setelah sesi dimulai.
+                </Muted>
+              ) : (
+                <View style={{ gap: 10 }}>
+                  {session.translators.map((translator) => (
+                    <TranslatorCard
+                      key={translator.agentId}
+                      onOpenAgent={
+                        navigation
+                          ? () => navigation.openAgent({ agentId: translator.agentId })
+                          : undefined
+                      }
+                      theme={theme}
+                      translator={translator}
+                    />
+                  ))}
+                </View>
+              )}
+              <Muted selectable theme={theme}>
+                Folder hasil: {session.translation?.outputDir ?? "belum diset"}. Buka berkas dari
+                file explorer workspace; plugin tidak membuka atau menulis berkas.
+              </Muted>
+            </Card>
+          ) : null}
+
           <Card theme={theme}>
             <View style={styles.spread}>
               <SectionTitle theme={theme}>
@@ -509,8 +577,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
             </View>
             {session.reviewers.length === 0 ? (
               <Muted theme={theme}>
-                {sessionPreset.roles.lead} belum membuat {sessionPreset.roles.reviewerPlural}.
-                Ini bisa memakan waktu beberapa detik setelah sesi dimulai.
+                {session.task === "translate"
+                  ? `${sessionPreset.roles.lead} belum membuat ${sessionPreset.roles.reviewerPlural}. QA baru dimulai setelah semua unit terjemahan terminal.`
+                  : `${sessionPreset.roles.lead} belum membuat ${sessionPreset.roles.reviewerPlural}. Ini bisa memakan waktu beberapa detik setelah sesi dimulai.`}
               </Muted>
             ) : (
               <View style={{ gap: 10 }}>
@@ -534,7 +603,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
           {session.phase === "complete" || session.verdict ? (
             <Card theme={theme}>
               <View style={styles.spread}>
-                <SectionTitle theme={theme}>Hasil konsolidasi</SectionTitle>
+                <SectionTitle theme={theme}>
+                  {session.task === "translate" ? "Hasil terjemahan" : "Hasil konsolidasi"}
+                </SectionTitle>
                 {session.verdict ? (
                   <VerdictBadge
                     preset={sessionPreset}
@@ -589,8 +660,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 Pesan ke {sessionPreset.roles.lead.toLowerCase()}
               </SectionTitle>
               <Muted theme={theme}>
-                Gunakan untuk mengarahkan ulang review, meminta fokus tambahan, atau menanyakan
-                temuan. Permintaan izin tidak disetujui dari sini.
+                {session.task === "translate"
+                  ? `Gunakan untuk mengarahkan ulang terjemahan, meminta fokus QA tambahan, atau menanyakan unit yang tertahan. Permintaan izin tidak disetujui dari sini.`
+                  : `Gunakan untuk mengarahkan ulang review, meminta fokus tambahan, atau menanyakan temuan. Permintaan izin tidak disetujui dari sini.`}
               </Muted>
               <TextInput
                 accessibilityLabel={`Pesan untuk ${sessionPreset.roles.lead.toLowerCase()}`}
@@ -660,7 +732,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
           </Card>
 
           <Muted theme={theme}>
-            Review berjalan read-only lewat prompt. Izin agen tetap ditinjau manual di Paseo.
+            {session.task === "translate"
+              ? `Penerjemah menulis hanya ke folder hasil lewat prompt; plugin tidak menulis berkas. Izin agen tetap ditinjau manual di Paseo.`
+              : `Review berjalan read-only lewat prompt. Izin agen tetap ditinjau manual di Paseo.`}{" "}
             Lensa tersedia: {sessionPreset.lenses.map((lens) => lens.label).join(", ")}.
             Kedalaman: {depthFor(sessionPreset, session.depth).hint}
           </Muted>
@@ -683,17 +757,25 @@ function PastSessionCard({
     <Card theme={theme}>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <SectionTitle theme={theme}>Sesi terakhir</SectionTitle>
-        <PhaseBadge phase={session.phase} theme={theme} />
+        <PhaseBadge phase={session.phase} task={session.task} theme={theme} />
         {session.verdict ? (
           <VerdictBadge preset={preset} theme={theme} verdict={session.verdict} />
         ) : null}
       </View>
       <BodyText theme={theme}>{session.target}</BodyText>
       <Muted theme={theme}>
-        {preset.label} · {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
+        {session.task === "translate" ? "Terjemahan" : "Review"} · {preset.label} ·{" "}
+        {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
         {session.coverage.completed}/{session.coverage.total} laporan ·{" "}
         {session.createdAt ? formatClock(session.createdAt) : ""}
       </Muted>
+      {session.task === "translate" ? (
+        <Muted theme={theme}>
+          Folder hasil: {session.translation?.outputDir ?? "belum diset"} ·{" "}
+          {translationProgress(session.translators).done}/
+          {translationProgress(session.translators).total} unit selesai
+        </Muted>
+      ) : null}
       {session.finalSummary ? <BodyText theme={theme}>{session.finalSummary}</BodyText> : null}
       {session.error ? (
         <Text selectable style={{ color: theme.colors.statusDanger, fontSize: 12, lineHeight: 18 }}>

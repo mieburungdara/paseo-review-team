@@ -1,12 +1,13 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import type { Finding, Reviewer } from "../shared/contracts";
+import type { Finding, Reviewer, Translator } from "../shared/contracts";
 import {
   lensLabelFor,
   type PresetClientConfig,
   type PresetVerdictLabels,
 } from "../shared/presets";
+import { outputStatusLabel } from "../shared/translation";
 
 type Tone = "neutral" | "accent" | "success" | "warning" | "danger";
 
@@ -30,6 +31,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const PHASE_LABELS: Record<string, string> = {
   starting: "Menyiapkan",
+  translating: "Menerjemahkan",
   reviewing: "Review berjalan",
   consolidating: "Konsolidasi",
   complete: "Selesai",
@@ -82,8 +84,20 @@ const badgeStyles = StyleSheet.create({
   text: { fontSize: 11, fontWeight: "700" },
 });
 
-export function PhaseBadge({ theme, phase }: { theme: PluginTheme; phase: string }) {
-  return <StatusBadge theme={theme} status={phase} label={PHASE_LABELS[phase] ?? phase} />;
+export function PhaseBadge({
+  theme,
+  phase,
+  task,
+}: {
+  theme: PluginTheme;
+  phase: string;
+  task?: string;
+}) {
+  const label =
+    phase === "reviewing" && task === "translate"
+      ? "QA terjemahan"
+      : PHASE_LABELS[phase] ?? phase;
+  return <StatusBadge theme={theme} status={phase} label={label} />;
 }
 
 export function SeverityBadge({ theme, severity }: { theme: PluginTheme; severity: string }) {
@@ -318,20 +332,24 @@ export function CoverageBar({
   theme,
   completed,
   total,
+  title = "Coverage laporan",
+  unit = "lensa",
 }: {
   theme: PluginTheme;
   completed: number;
   total: number;
+  title?: string;
+  unit?: string;
 }) {
   const ratio = total > 0 ? Math.min(1, completed / total) : 0;
   return (
     <View style={{ gap: 6 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "600" }}>
-          Coverage laporan
+          {title}
         </Text>
         <Text style={{ color: theme.colors.foreground, fontSize: 11, fontWeight: "700" }}>
-          {completed}/{total} lensa
+          {completed}/{total} {unit}
         </Text>
       </View>
       <View
@@ -507,6 +525,124 @@ export function ReviewerCard({
             </Text>
           ) : null}
         </>
+      ) : null}
+    </Card>
+  );
+}
+
+export function OutputStatusBadge({
+  theme,
+  status,
+}: {
+  theme: PluginTheme;
+  status: string;
+}) {
+  const tone: Tone =
+    status === "present"
+      ? "success"
+      : status === "missing"
+        ? "warning"
+        : status === "outside" || status === "unsafe"
+          ? "danger"
+          : "neutral";
+  const color = toneColor(theme, tone);
+  return (
+    <View style={[badgeStyles.badge, { borderColor: color, backgroundColor: theme.colors.surface1 }]}>
+      <Text style={[badgeStyles.text, { color }]}>{outputStatusLabel(status)}</Text>
+    </View>
+  );
+}
+
+export function TranslatorCard({
+  theme,
+  translator,
+  onOpenAgent,
+}: {
+  theme: PluginTheme;
+  translator: Translator;
+  onOpenAgent?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasNotes = translator.notes.length > 0;
+  const canExpand = Boolean(translator.reportText) || hasNotes;
+
+  return (
+    <Card theme={theme} style={{ gap: 8 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
+          <Text style={{ color: theme.colors.foreground, fontSize: 13, fontWeight: "700" }}>
+            {translator.unit}
+          </Text>
+          <StatusBadge theme={theme} status={translator.status} />
+          <OutputStatusBadge theme={theme} status={translator.outputStatus} />
+        </View>
+        {onOpenAgent ? (
+          <Button theme={theme} label="Buka agen" onPress={onOpenAgent} compact />
+        ) : null}
+      </View>
+
+      {translator.summary ? <BodyText theme={theme}>{translator.summary}</BodyText> : null}
+
+      <View style={{ gap: 2 }}>
+        <Muted selectable theme={theme}>
+          Sumber: {translator.sourcePath ?? "belum dilaporkan"}
+        </Muted>
+        <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
+          Hasil: {translator.outputPath ?? "belum dilaporkan"}
+        </Text>
+      </View>
+
+      {translator.reportFormat === "text" ? (
+        <Muted theme={theme}>Format teks (JSON tidak valid)</Muted>
+      ) : null}
+      {translator.reportFormat === "none" ? (
+        <Muted theme={theme}>Belum ada laporan terjemahan</Muted>
+      ) : null}
+
+      {hasNotes && !expanded ? (
+        <View style={{ gap: 4 }}>
+          {translator.notes.slice(0, 3).map((note, index) => (
+            <Text
+              key={`${note}-${index}`}
+              selectable
+              style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}
+            >
+              • {note}
+            </Text>
+          ))}
+          {translator.notes.length > 3 ? (
+            <Muted theme={theme}>+{translator.notes.length - 3} catatan lainnya.</Muted>
+          ) : null}
+        </View>
+      ) : null}
+
+      {canExpand ? (
+        <Button
+          theme={theme}
+          label={expanded ? "Sembunyikan laporan" : "Lihat catatan & laporan"}
+          onPress={() => setExpanded((value) => !value)}
+          compact
+        />
+      ) : null}
+
+      {expanded && hasNotes ? (
+        <View style={{ gap: 4 }}>
+          {translator.notes.map((note, index) => (
+            <Text
+              key={`${note}-${index}`}
+              selectable
+              style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}
+            >
+              • {note}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      {expanded && translator.reportText ? (
+        <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 12, lineHeight: 18 }}>
+          {translator.reportText}
+        </Text>
       ) : null}
     </Card>
   );

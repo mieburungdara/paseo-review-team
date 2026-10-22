@@ -39,10 +39,37 @@ export const ReviewerSchema = z.object({
 
 export type Reviewer = z.infer<typeof ReviewerSchema>;
 
+export const OutputStatusSchema = z.enum([
+  "unverified",
+  "present",
+  "missing",
+  "outside",
+  "unsafe",
+]);
+
+export const TranslatorSchema = z.object({
+  agentId: z.string(),
+  unit: z.string(),
+  title: z.string().nullable(),
+  status: ReviewerStatusSchema,
+  sourcePath: z.string().nullable(),
+  outputPath: z.string().nullable(),
+  outputStatus: OutputStatusSchema,
+  summary: z.string().nullable(),
+  notes: z.array(z.string()),
+  reportText: z.string().nullable(),
+  reportFormat: z.enum(["none", "structured", "text"]),
+  lastSeenAt: z.string().nullable(),
+  verifiedAt: z.string().nullable(),
+});
+
+export type Translator = z.infer<typeof TranslatorSchema>;
+
 export const SessionStatusSchema = z.enum(["starting", "running", "needs_input", "stopped", "failed"]);
 
 export const SessionPhaseSchema = z.enum([
   "starting",
+  "translating",
   "reviewing",
   "consolidating",
   "complete",
@@ -53,7 +80,16 @@ export const SessionPhaseSchema = z.enum([
 export const EventSchema = z.object({
   id: z.string(),
   at: z.string(),
-  kind: z.enum(["session", "lead", "reviewer", "permission", "report", "message", "error"]),
+  kind: z.enum([
+    "session",
+    "lead",
+    "translator",
+    "reviewer",
+    "permission",
+    "report",
+    "message",
+    "error",
+  ]),
   message: z.string(),
   agentId: z.string().nullable(),
   lens: z.string().nullable(),
@@ -64,8 +100,19 @@ export type ReviewEvent = z.infer<typeof EventSchema>;
 export const ReviewSessionSchema = z.object({
   id: z.string(),
   presetId: z.string().max(40).default("code"),
+  task: z.enum(["review", "translate"]).default("review"),
+  translation: z
+    .object({
+      sourceLanguage: z.string(),
+      targetLanguage: z.string(),
+      outputDir: z.string(),
+      unitLabel: z.string(),
+    })
+    .nullable()
+    .default(null),
   workspaceId: z.string().nullable(),
   workspaceName: z.string().nullable(),
+  workspaceDirectory: z.string().nullable().default(null),
   target: z.string(),
   lenses: z.array(z.string()),
   depth: z.enum(["quick", "standard", "deep"]),
@@ -80,6 +127,7 @@ export const ReviewSessionSchema = z.object({
   leadState: z.enum(["working", "needs_input", "blocked", "complete", "failed"]).nullable(),
   leadNote: z.string().nullable(),
   reviewers: z.array(ReviewerSchema),
+  translators: z.array(TranslatorSchema).default([]),
   pendingPermissions: z.array(z.string()),
   findings: z.array(FindingSchema),
   finalReport: z.string().nullable(),
@@ -117,6 +165,7 @@ export const SetupDefaultsSchema = z.object({
   model: z.string().nullable(),
   lenses: z.array(z.string()),
   depth: z.enum(["quick", "standard", "deep"]),
+  outputDir: z.string().max(300).nullable().default(null),
 });
 
 export type ProviderOption = z.infer<typeof ProviderOptionSchema>;
@@ -155,6 +204,7 @@ export const sessionStartRpc = defineRpc({
     modelId: z.string().trim().min(1).max(200),
     modeId: z.string().max(200).nullable().optional(),
     thinkingOptionId: z.string().max(200).nullable().optional(),
+    outputDir: z.string().trim().min(1).max(300).optional(),
   }),
   output: z.object({ session: ReviewSessionSchema }),
 });

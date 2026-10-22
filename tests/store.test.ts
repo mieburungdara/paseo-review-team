@@ -12,8 +12,11 @@ function makeSession(id: string, updatedAt: string): ReviewSession {
   return {
     id,
     presetId: "code",
+    task: "review",
+    translation: null,
     workspaceId: "workspace-1",
     workspaceName: "Demo",
+    workspaceDirectory: null,
     target: "C:/demo",
     lenses: ["correctness"],
     depth: "standard",
@@ -28,6 +31,7 @@ function makeSession(id: string, updatedAt: string): ReviewSession {
     leadState: "working",
     leadNote: null,
     reviewers: [],
+    translators: [],
     pendingPermissions: [],
     findings: [],
     finalReport: null,
@@ -61,6 +65,7 @@ describe("SessionStore", () => {
       model: "gpt-5",
       lenses: ["correctness", "security"],
       depth: "deep",
+      outputDir: null,
     });
 
     const reopened = new SessionStore(directory);
@@ -72,6 +77,7 @@ describe("SessionStore", () => {
       model: "gpt-5",
       lenses: ["correctness", "security"],
       depth: "deep",
+      outputDir: null,
     });
   });
 
@@ -102,8 +108,57 @@ describe("SessionStore", () => {
     const store = new SessionStore(directory);
     await store.ensureLoaded();
     expect(store.get("legacy")?.presetId).toBe("code");
+    expect(store.get("legacy")?.task).toBe("review");
+    expect(store.get("legacy")?.translation).toBeNull();
+    expect(store.get("legacy")?.translators).toEqual([]);
+    expect(store.get("legacy")?.workspaceDirectory).toBeNull();
     expect(store.getDefaults()?.presetId).toBe("code");
     expect(store.getDefaults()?.lenses).toEqual(["correctness"]);
+    expect(store.getDefaults()?.outputDir).toBeNull();
+  });
+
+  it("round-trips a translation session with translator progress", async () => {
+    const store = new SessionStore(directory);
+    const session: ReviewSession = {
+      ...makeSession("translate-session", "2026-01-01T00:00:00.000Z"),
+      presetId: "translate",
+      task: "translate",
+      translation: {
+        sourceLanguage: "English",
+        targetLanguage: "Indonesian",
+        outputDir: "translated/id",
+        unitLabel: "Bab",
+      },
+      workspaceDirectory: "C:/workspace",
+      phase: "translating",
+      translators: [
+        {
+          agentId: "translator-1",
+          unit: "Bab 1",
+          title: "Translator: Bab 1",
+          status: "done",
+          sourcePath: "manuscript/en/bab-01.md",
+          outputPath: "translated/id/bab-01.md",
+          outputStatus: "present",
+          summary: "Selesai",
+          notes: [],
+          reportText: "laporan",
+          reportFormat: "structured",
+          lastSeenAt: "2026-01-01T00:00:00.000Z",
+          verifiedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await store.save(session);
+
+    const reopened = new SessionStore(directory);
+    await reopened.ensureLoaded();
+    const loaded = reopened.get("translate-session");
+    expect(loaded?.task).toBe("translate");
+    expect(loaded?.translation?.outputDir).toBe("translated/id");
+    expect(loaded?.workspaceDirectory).toBe("C:/workspace");
+    expect(loaded?.translators[0].unit).toBe("Bab 1");
+    expect(loaded?.translators[0].outputStatus).toBe("present");
   });
 
   it("keeps a novel preset on a session", async () => {

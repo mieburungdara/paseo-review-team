@@ -9,8 +9,11 @@ import {
   depthFor,
   lensHintFor,
   lensLabelFor,
+  translatorLabelFor,
+  translatorPluralFor,
   type PresetDepthId,
 } from "../shared/presets";
+import { isSafeRelativePath, normalizeRelativePath } from "../shared/translation";
 import { BodyText, Button, Card, Chip, Muted, SectionTitle } from "./components";
 
 function messageOf(error: unknown): string {
@@ -42,6 +45,13 @@ export function SetupForm({
 
   const [target, setTarget] = useState("");
   const [presetId, setPresetId] = useState(state.defaults.presetId);
+  const [outputDir, setOutputDir] = useState(() => {
+    const initial = state.presets.find((entry) => entry.id === state.defaults.presetId) ??
+      state.presets[0];
+    if (!initial || initial.task !== "translate") return "";
+    const saved = initial.id === state.defaults.presetId ? state.defaults.outputDir : null;
+    return saved ?? initial.translation?.defaultOutputDir ?? "";
+  });
   const [providerId, setProviderId] = useState<string | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
   const [lenses, setLenses] = useState<string[] | null>(null);
@@ -71,11 +81,18 @@ export function SetupForm({
 
   const selectedDepth = depth ?? (presetIsDefault ? state.defaults.depth : "standard");
   const trimmedTarget = target.trim();
+  const isTranslation = preset.task === "translate";
+  const trimmedOutputDir = outputDir.trim();
+  const outputDirSafe = !isTranslation || isSafeRelativePath(trimmedOutputDir);
   const canStart =
     state.agentToolsEnabled &&
     trimmedTarget.length > 0 &&
     selectedLenses.length > 0 &&
     Boolean(provider && chosenModel) &&
+    (!isTranslation ||
+      (Boolean(workspace?.directory) &&
+        trimmedOutputDir.length > 0 &&
+        outputDirSafe)) &&
     !busy;
 
   const styles = useMemo(
@@ -95,6 +112,17 @@ export function SetupForm({
           lineHeight: 19,
           textAlignVertical: "top",
         },
+        singleInput: {
+          minHeight: 44,
+          borderRadius: 9,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface0,
+          color: theme.colors.foreground,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          fontSize: 13,
+        },
         row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
         column: { flexDirection: "column", gap: 8 },
       }),
@@ -103,10 +131,17 @@ export function SetupForm({
 
   function selectPreset(nextId: string) {
     if (nextId === preset.id) return;
+    const next = state.presets.find((entry) => entry.id === nextId);
     setPresetId(nextId);
     setLenses(null);
     setDepth(null);
     setError(null);
+    if (next?.task === "translate") {
+      const saved = next.id === state.defaults.presetId ? state.defaults.outputDir : null;
+      setOutputDir(saved ?? next.translation?.defaultOutputDir ?? "");
+    } else {
+      setOutputDir("");
+    }
   }
 
   function toggleLens(lens: string) {
@@ -145,6 +180,7 @@ export function SetupForm({
         depth: selectedDepth,
         providerId: provider.id,
         modelId: chosenModel.id,
+        ...(isTranslation ? { outputDir: trimmedOutputDir } : {}),
       });
       onStarted(result.session);
     } catch (cause) {
@@ -157,15 +193,32 @@ export function SetupForm({
   return (
     <View style={styles.root}>
       <Card theme={theme}>
-        <SectionTitle theme={theme}>Mulai review tim</SectionTitle>
+        <SectionTitle theme={theme}>
+          {isTranslation ? "Mulai terjemahan tim" : "Mulai review tim"}
+        </SectionTitle>
         <Muted theme={theme}>
-          Satu agen bertindak sebagai {preset.roles.lead} dan memimpin{" "}
-          {preset.roles.reviewerPlural} paralel di workspace{" "}
-          <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>
-            {workspace?.name ?? workspaceId}
-          </Text>
-          . {preset.roles.reviewer} hanya melapor ke {preset.roles.lead};{" "}
-          {preset.roles.lead} yang menggabungkan temuan.
+          {isTranslation ? (
+            <>
+              Satu agen bertindak sebagai {preset.roles.lead} dan membuat{" "}
+              {translatorPluralFor(preset)} per{" "}
+              {preset.translation?.unitLabel.toLowerCase() ?? "unit"} di workspace{" "}
+              <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>
+                {workspace?.name ?? workspaceId}
+              </Text>
+              . Setelah semua unit terminal, {preset.roles.lead} membuat{" "}
+              {preset.roles.reviewerPlural} read-only untuk memeriksa hasil.
+            </>
+          ) : (
+            <>
+              Satu agen bertindak sebagai {preset.roles.lead} dan memimpin{" "}
+              {preset.roles.reviewerPlural} paralel di workspace{" "}
+              <Text style={{ color: theme.colors.foreground, fontWeight: "700" }}>
+                {workspace?.name ?? workspaceId}
+              </Text>
+              . {preset.roles.reviewer} hanya melapor ke {preset.roles.lead};{" "}
+              {preset.roles.lead} yang menggabungkan temuan.
+            </>
+          )}
         </Muted>
         {workspace?.directory ? (
           <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
@@ -175,7 +228,7 @@ export function SetupForm({
       </Card>
 
       <Card theme={theme}>
-        <SectionTitle theme={theme}>Preset review</SectionTitle>
+        <SectionTitle theme={theme}>Preset</SectionTitle>
         <View style={styles.row}>
           {state.presets.map((entry) => (
             <Chip
@@ -211,11 +264,51 @@ export function SetupForm({
         />
       </Card>
 
+      {isTranslation && preset.translation ? (
+        <Card theme={theme}>
+          <SectionTitle theme={theme}>Folder hasil</SectionTitle>
+          <Muted theme={theme}>
+            Path relatif terhadap root workspace. {translatorLabelFor(preset)} menulis berkas{" "}
+            {preset.translation.outputExtension} di folder ini. Plugin tidak membuat folder atau
+            menulis berkas.
+          </Muted>
+          <TextInput
+            accessibilityLabel="Folder hasil terjemahan"
+            editable={!busy}
+            maxLength={300}
+            onChangeText={setOutputDir}
+            placeholder={preset.translation.defaultOutputDir}
+            placeholderTextColor={theme.colors.foregroundMuted}
+            style={styles.singleInput}
+            value={outputDir}
+          />
+          {workspace?.directory ? (
+            trimmedOutputDir.length > 0 && outputDirSafe ? (
+              <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+                {workspace.directory}/{normalizeRelativePath(trimmedOutputDir)}
+              </Text>
+            ) : null
+          ) : (
+            <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>
+              Workspace ini tidak punya folder lokal di daemon. Terjemahan membutuhkan workspace
+              dengan folder nyata.
+            </Text>
+          )}
+          {trimmedOutputDir.length > 0 && !outputDirSafe ? (
+            <Text style={{ color: theme.colors.statusDanger, fontSize: 12 }}>
+              Folder hasil harus path relatif yang aman: tanpa drive, tanpa awalan /, tanpa "..",
+              dan tidak boleh folder root workspace.
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
+
       <Card theme={theme}>
-        <SectionTitle theme={theme}>Lensa review</SectionTitle>
+        <SectionTitle theme={theme}>{isTranslation ? "Lensa QA" : "Lensa review"}</SectionTitle>
         <Muted theme={theme}>
-          Setiap lensa menjadi satu {preset.roles.reviewer.toLowerCase()}. Pilih yang relevan;
-          minimal satu.
+          {isTranslation
+            ? `Setiap lensa menjadi satu ${preset.roles.reviewer.toLowerCase()}. QA berjalan setelah semua unit terjemahan terminal. Pilih minimal satu.`
+            : `Setiap lensa menjadi satu ${preset.roles.reviewer.toLowerCase()}. Pilih yang relevan; minimal satu.`}
         </Muted>
         <View style={styles.row}>
           {preset.lenses.map((lens) => (
@@ -313,9 +406,12 @@ export function SetupForm({
         <Card theme={theme} style={{ borderColor: theme.colors.statusWarning }}>
           <SectionTitle theme={theme}>Izin agent tools diperlukan</SectionTitle>
           <BodyText theme={theme}>
-            {preset.roles.lead} membuat {preset.roles.reviewer.toLowerCase()} memakai alat
-            agent Paseo (`create_agent`). Alat ini harus diaktifkan pada setelan daemon, dan
-            berlaku untuk agen baru. Plugin ini tidak mengaktifkannya secara otomatis.
+            {preset.roles.lead} membuat{" "}
+            {isTranslation
+              ? `${translatorPluralFor(preset)} dan ${preset.roles.reviewerPlural}`
+              : preset.roles.reviewer.toLowerCase()}{" "}
+            memakai alat agent Paseo (`create_agent`). Alat ini harus diaktifkan pada setelan
+            daemon, dan berlaku untuk agen baru. Plugin ini tidak mengaktifkannya secara otomatis.
           </BodyText>
           <Muted theme={theme}>
             Dengan menekan tombol di bawah, kamu mengizinkan plugin mengubah setelan
@@ -333,6 +429,24 @@ export function SetupForm({
         </Card>
       ) : null}
 
+      {isTranslation ? (
+        <Card theme={theme} style={{ borderColor: theme.colors.statusWarning }}>
+          <SectionTitle theme={theme}>Mode menulis</SectionTitle>
+          <BodyText theme={theme}>
+            {translatorPluralFor(preset)} menulis dan dapat menimpa berkas di folder hasil.
+            Plugin tidak menulis berkas, tidak membuat folder, dan tidak menyetujui izin otomatis.
+            Ini bukan sandbox: izin tulis tetap memakai izin agen masing-masing dan ditinjau
+            manual di Paseo.
+          </BodyText>
+          <Muted theme={theme}>
+            Batas bawaan: {preset.translation?.maxUnitsPerSession ?? 20}{" "}
+            {preset.translation?.unitLabel.toLowerCase() ?? "unit"} per sesi dan{" "}
+            {preset.translation?.maxConcurrentTranslators ?? 5} penerjemah aktif. Untuk novel
+            panjang, jalankan beberapa sesi per rentang.
+          </Muted>
+        </Card>
+      ) : null}
+
       {error ? (
         <Card theme={theme} style={{ borderColor: theme.colors.statusDanger }}>
           <Text selectable style={{ color: theme.colors.statusDanger, fontSize: 12, lineHeight: 18 }}>
@@ -347,7 +461,9 @@ export function SetupForm({
           label={
             busy
               ? "Memulai…"
-              : `Mulai review (${selectedLenses.length} ${preset.roles.reviewer})`
+              : isTranslation
+                ? `Mulai terjemahan (${selectedLenses.length} lensa QA)`
+                : `Mulai review (${selectedLenses.length} ${preset.roles.reviewer})`
           }
           onPress={() => {
             void submit();
@@ -357,8 +473,9 @@ export function SetupForm({
         />
         <Muted theme={theme}>{preset.ui.startHint}</Muted>
         <Muted theme={theme}>
-          Review bersifat read-only lewat instruksi prompt, bukan sandbox. {preset.roles.lead}{" "}
-          dan {preset.roles.reviewer.toLowerCase()} tetap memakai izin agen masing-masing.
+          {isTranslation
+            ? `Penerjemah menulis hanya ke folder hasil lewat instruksi prompt, bukan sandbox. ${preset.roles.lead}, ${preset.roles.reviewer.toLowerCase()}, dan penerjemah tetap memakai izin agen masing-masing.`
+            : `Review bersifat read-only lewat instruksi prompt, bukan sandbox. ${preset.roles.lead} dan ${preset.roles.reviewer.toLowerCase()} tetap memakai izin agen masing-masing.`}
         </Muted>
       </View>
     </View>

@@ -9,23 +9,30 @@ import {
   LABEL_LENS,
   LABEL_ROLE,
   LABEL_SESSION,
+  LABEL_UNIT,
+  MAX_UNIT_LENGTH,
   RECONCILE_INTERVAL_MS,
   ROLE_LEAD,
+  ROLE_REVIEWER,
+  ROLE_TRANSLATOR,
 } from "../shared/constants";
-import type { Reviewer, ReviewSession } from "../shared/contracts";
+import type { Reviewer, ReviewSession, Translator } from "../shared/contracts";
 import { buildConsolidationNudgeMessage } from "../shared/prompts";
 import {
   resolvePreset,
   reviewerLensId,
   type PresetDefinition,
+  type PresetTask,
 } from "../shared/presets";
 import {
   parseFinalReport,
   parseLeadStatus,
   parseReviewerReport,
   parseReviewerStatus,
+  parseTranslationReport,
   recentAssistantText,
 } from "../shared/reports";
+import { outputStatusLabel, translationUnitFromTitle } from "../shared/translation";
 import {
   errorMessage,
   listSessionAgents,
@@ -36,18 +43,24 @@ import {
 } from "./agents";
 import { loadPresetCatalog } from "./presets";
 import { appendEvent, store, touchSession } from "./store";
+import { verifyTranslationOutput } from "./translation";
+
+type AgentRole = "lead" | "translator" | "reviewer";
 
 interface ResolvedAgent {
   session: ReviewSession;
-  role: "lead" | "reviewer";
+  role: AgentRole;
 }
 
 const LEAD_TITLE_PATTERN = /^Review Team Lead \[([0-9a-f]{8})\]/i;
 const ENRICH_LIMIT = 8;
 const RECONCILE_THROTTLE_MS = 5_000;
 
-const CONSOLIDATION_NUDGE_EVENT =
-  "Semua lensa sudah memberi hasil. Lead diminta menyusun laporan konsolidasi.";
+function consolidationNudgeEvent(task: PresetTask): string {
+  return task === "translate"
+    ? "Semua unit selesai dan lensa QA sudah memberi hasil. Lead diminta menyusun laporan konsolidasi."
+    : "Semua lensa sudah memberi hasil. Lead diminta menyusun laporan konsolidasi.";
+}
 
 const lastReconcileAt = new Map<string, number>();
 const enrichTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -77,12 +90,52 @@ async function resolveSessionForAgent(
   const asLead = store.findByLeadAgentId(agent.id);
   if (asLead) return { session: asLead, role: "lead" };
 
+  const title = titleForAgent(agent);
+
   if (agent.parentAgentId) {
     const parentSession = store.findByLeadAgentId(agent.parentAgentId);
-    if (parentSession) return { session: parentSession, role: "reviewer" };
+    if (parentSession) {
+      if (parentSession.translators.some((entry) => entry.agentId === agent.id)) {
+        return { session: parentSession, role: "translator" };
+      }
+      if (parentSession.reviewers.some((entry) => entry.agentId === agent.id)) {
+        return { session: parentSession, role: "reviewer" };
+      }
+
+      let labelRole: string | null = null;
+      let snapshotTitle: string | null = null;
+      if (paseo) {
+        try {
+          const snapshot = await refreshAgent(paseo, agent.id);
+          labelRole = snapshot?.labels?.[LABEL_ROLE] ?? null;
+          snapshotTitle = snapshot?.title ?? null;
+        } catch (error) {
+          console.warn(
+            `[review-team] could not read labels of child ${agent.id}:`,
+            errorMessage(error),
+          );
+        }
+      }
+
+      if (labelRole === ROLE_REVIEWER) {
+        return { session: parentSession, role: "reviewer" };
+      }
+      if (
+        labelRole === ROLE_TRANSLATOR ||
+        translationUnitFromTitle(snapshotTitle ?? title)
+      ) {
+        return { session: parentSession, role: "translator" };
+      }
+      return {
+        session: parentSession,
+        role:
+          parentSession.task === "translate" && parentSession.phase === "translating"
+            ? "translator"
+            : "reviewer",
+      };
+    }
   }
 
-  const title = titleForAgent(agent);
   if (title) {
     const titleMatch = LEAD_TITLE_PATTERN.exec(title);
     if (titleMatch) {
@@ -101,10 +154,14 @@ async function resolveSessionForAgent(
     if (!sessionId) return null;
     const session = store.get(sessionId);
     if (!session) return null;
-    const role =
-      snapshot.labels?.[LABEL_ROLE] === ROLE_LEAD || session.leadAgentId === null
+    const labelRole = snapshot.labels?.[LABEL_ROLE];
+    const role: AgentRole =
+      labelRole === ROLE_LEAD || session.leadAgentId === null
         ? "lead"
-        : "reviewer";
+        : labelRole === ROLE_TRANSLATOR ||
+            translationUnitFromTitle(snapshot.title ?? title)
+          ? "translator"
+          : "reviewer";
     return { session, role };
   } catch (error) {
     console.warn(`[review-team] could not resolve agent ${agent.id}:`, errorMessage(error));
@@ -114,6 +171,51 @@ async function resolveSessionForAgent(
 
 function findReviewer(session: ReviewSession, agentId: string): Reviewer | undefined {
   return session.reviewers.find((reviewer) => reviewer.agentId === agentId);
+}
+
+function findTranslator(session: ReviewSession, agentId: string): Translator | undefined {
+  return session.translators.find((translator) => translator.agentId === agentId);
+}
+
+function normalizeUnit(value: string | null | undefined): string {
+  const unit = value?.trim();
+  return unit ? unit.slice(0, MAX_UNIT_LENGTH) : "Unit";
+}
+
+function upsertTranslator(
+  session: ReviewSession,
+  agent: AgentLike,
+  status: Translator["status"],
+  unitLabel?: string | null,
+): { translator: Translator; created: boolean } {
+  const title = titleForAgent(agent);
+  const unit = normalizeUnit(unitLabel ?? translationUnitFromTitle(title) ?? title);
+
+  const existing = findTranslator(session, agent.id);
+  if (existing) {
+    if (title && existing.title !== title) existing.title = title;
+    if (unit !== "Unit" && existing.unit !== unit) existing.unit = unit;
+    existing.lastSeenAt = nowIso();
+    return { translator: existing, created: false };
+  }
+
+  const translator: Translator = {
+    agentId: agent.id,
+    unit,
+    title,
+    status,
+    sourcePath: null,
+    outputPath: null,
+    outputStatus: "unverified",
+    summary: null,
+    notes: [],
+    reportText: null,
+    reportFormat: "none",
+    lastSeenAt: nowIso(),
+    verifiedAt: null,
+  };
+  session.translators.push(translator);
+  return { translator, created: true };
 }
 
 function upsertReviewer(
@@ -181,9 +283,59 @@ function allLensesAccounted(session: ReviewSession): boolean {
   );
 }
 
+function allTranslatorsTerminal(session: ReviewSession): boolean {
+  return (
+    session.translators.length > 0 &&
+    session.translators.every(
+      (translator) =>
+        translator.status === "done" ||
+        translator.status === "blocked" ||
+        translator.status === "failed" ||
+        translator.status === "archived",
+    )
+  );
+}
+
+function syncTranslationPhase(session: ReviewSession): void {
+  if (session.task !== "translate") return;
+  if (
+    session.finalReport ||
+    session.phase === "complete" ||
+    session.phase === "stopped" ||
+    session.phase === "failed" ||
+    session.translators.length === 0
+  ) {
+    return;
+  }
+
+  if (!allTranslatorsTerminal(session)) {
+    if (session.phase === "reviewing" || session.phase === "consolidating") {
+      session.phase = "translating";
+      addReportEvent(
+        session,
+        "Batch penerjemah masih berjalan. Fase kembali ke terjemahan.",
+        session.leadAgentId,
+        null,
+      );
+    }
+    return;
+  }
+
+  if (session.reviewers.length > 0 && session.phase === "translating") {
+    session.phase = "reviewing";
+    addReportEvent(
+      session,
+      "Semua unit terjemahan terminal. QA dapat dimulai.",
+      session.leadAgentId,
+      null,
+    );
+  }
+}
+
 function refreshStatusFlags(session: ReviewSession): void {
   if (session.status === "stopped" || session.status === "failed") return;
   updateCoverage(session);
+  if (session.task === "translate") syncTranslationPhase(session);
 
   if (session.finalReport) {
     session.phase = "complete";
@@ -194,6 +346,7 @@ function refreshStatusFlags(session: ReviewSession): void {
   } else if (
     session.pendingPermissions.length > 0 ||
     session.reviewers.some((reviewer) => reviewer.status === "needs_input") ||
+    session.translators.some((translator) => translator.status === "needs_input") ||
     session.leadState === "blocked"
   ) {
     session.status = "needs_input";
@@ -201,17 +354,23 @@ function refreshStatusFlags(session: ReviewSession): void {
     session.status = "running";
   }
 
+  const translationReady = session.task !== "translate" || allTranslatorsTerminal(session);
+
   if (
     session.phase !== "complete" &&
     session.phase !== "failed" &&
     session.phase !== "stopped" &&
-    allLensesAccounted(session)
+    allLensesAccounted(session) &&
+    translationReady
   ) {
     if (session.phase !== "consolidating") {
       session.phase = "consolidating";
       appendEvent(session, {
         kind: "report",
-        message: "Semua lensa sudah memberikan hasil. Menunggu laporan konsolidasi lead.",
+        message:
+          session.task === "translate"
+            ? "Semua unit selesai dan lensa QA sudah memberi hasil. Menunggu laporan konsolidasi lead."
+            : "Semua lensa sudah memberikan hasil. Menunggu laporan konsolidasi lead.",
         agentId: session.leadAgentId,
         lens: null,
       });
@@ -272,6 +431,18 @@ function applyLeadText(session: ReviewSession, text: string): boolean {
         null,
       );
       changed = true;
+    }
+    if (session.task === "translate" && !allTranslatorsTerminal(session)) {
+      const warning =
+        "Lead mengirim laporan akhir, tetapi masih ada unit terjemahan yang belum terminal. Periksa kartu penerjemah.";
+      if (!session.events.some((event) => event.message === warning)) {
+        appendEvent(session, {
+          kind: "report",
+          message: warning,
+          agentId: session.leadAgentId,
+          lens: null,
+        });
+      }
     }
     return true;
   }
@@ -361,6 +532,113 @@ function applyReviewerText(session: ReviewSession, reviewer: Reviewer, text: str
   return statusChanged || reportChanged;
 }
 
+async function applyTranslatorText(
+  session: ReviewSession,
+  translator: Translator,
+  text: string,
+): Promise<boolean> {
+  const report = parseTranslationReport(text);
+  const status = parseReviewerStatus(text);
+  const hasReport =
+    report.parsed ||
+    report.marker !== null ||
+    report.summary !== null ||
+    report.notes.length > 0 ||
+    report.output !== null;
+  if (!hasReport && !status) return false;
+
+  const previousStatus = translator.status;
+  const previousReport = translator.reportText;
+  const previousSummary = translator.summary;
+  const previousOutputStatus = translator.outputStatus;
+  let warning: string | null = null;
+
+  if (hasReport) {
+    translator.reportText = report.raw;
+    translator.reportFormat = report.parsed ? "structured" : "text";
+    if (report.summary) translator.summary = report.summary;
+    translator.notes = report.notes;
+    if (report.source) translator.sourcePath = report.source;
+    if (report.output) translator.outputPath = report.output;
+    translator.lastSeenAt = nowIso();
+
+    if (report.marker === "blocked") {
+      translator.status = "blocked";
+    } else if (report.marker === "failed") {
+      translator.status = "failed";
+    } else if (report.marker === "done" || report.parsed) {
+      if (!report.parsed) {
+        translator.status = "needs_input";
+        warning = "Laporan terjemahan belum ditemukan atau JSON tidak valid.";
+      } else {
+        const outputStatus = await verifyTranslationOutput({
+          workspaceDirectory: session.workspaceDirectory,
+          outputDir: session.translation?.outputDir ?? null,
+          sourcePath: translator.sourcePath,
+          outputPath: translator.outputPath,
+        });
+        translator.outputStatus = outputStatus;
+        translator.verifiedAt = nowIso();
+        if (outputStatus === "present") {
+          translator.status = "done";
+        } else {
+          translator.status = "needs_input";
+          warning = `Berkas hasil tidak lolos verifikasi: ${outputStatusLabel(outputStatus)}.`;
+        }
+      }
+    }
+  }
+
+  if (status && (!hasReport || (report.marker === null && !report.parsed))) {
+    if (status.state === "done" && !report.parsed) {
+      translator.status = "needs_input";
+      warning = "Penerjemah menandai selesai tanpa laporan terjemahan yang valid.";
+    } else {
+      translator.status = status.state === "working" ? "running" : status.state;
+    }
+    if (status.note && !translator.summary) translator.summary = status.note;
+    translator.lastSeenAt = nowIso();
+  }
+
+  const statusChanged = translator.status !== previousStatus;
+  const reportChanged =
+    translator.reportText !== previousReport ||
+    translator.summary !== previousSummary ||
+    translator.outputStatus !== previousOutputStatus;
+
+  if (warning && (statusChanged || reportChanged)) {
+    addReportEvent(
+      session,
+      `Penerjemah ${translator.unit}: ${warning}`,
+      translator.agentId,
+      null,
+    );
+  } else if (translator.status === "done" && (statusChanged || reportChanged)) {
+    addReportEvent(
+      session,
+      `Penerjemah ${translator.unit} selesai: ${translator.outputPath ?? "berkas hasil"}.`,
+      translator.agentId,
+      null,
+    );
+  } else if (translator.status === "blocked" && statusChanged) {
+    addReportEvent(
+      session,
+      `Penerjemah ${translator.unit} terhambat.`,
+      translator.agentId,
+      null,
+    );
+  } else if (translator.status === "failed" && statusChanged) {
+    addReportEvent(
+      session,
+      `Penerjemah ${translator.unit} gagal.`,
+      translator.agentId,
+      null,
+    );
+  }
+
+  return statusChanged || reportChanged;
+}
+
 async function enrichAgent(
   paseo: PaseoApi,
   session: ReviewSession,
@@ -369,15 +647,20 @@ async function enrichAgent(
   if (session.status === "stopped") return;
 
   const isLead = session.leadAgentId === agentId;
-  const reviewer = isLead ? undefined : findReviewer(session, agentId);
-  if (!isLead && !reviewer) return;
+  const translator = isLead ? undefined : findTranslator(session, agentId);
+  const reviewer = isLead || translator ? undefined : findReviewer(session, agentId);
+  if (!isLead && !translator && !reviewer) return;
 
   try {
     const payload = await readTimelineTail(paseo, agentId, 80);
     const text = recentAssistantText(payload.entries);
     if (!text) return;
 
-    const changed = isLead ? applyLeadText(session, text) : applyReviewerText(session, reviewer!, text);
+    const changed = isLead
+      ? applyLeadText(session, text)
+      : translator
+        ? await applyTranslatorText(session, translator, text)
+        : applyReviewerText(session, reviewer!, text);
     if (!changed) return;
 
     refreshStatusFlags(session);
@@ -413,9 +696,10 @@ async function maybeNudgeConsolidation(
   ) {
     return;
   }
+  const eventMessage = consolidationNudgeEvent(session.task);
   if (
     session.events.some(
-      (event) => event.kind === "message" && event.message === CONSOLIDATION_NUDGE_EVENT,
+      (event) => event.kind === "message" && event.message === eventMessage,
     )
   ) {
     return;
@@ -424,10 +708,15 @@ async function maybeNudgeConsolidation(
 
   consolidationNudges.add(session.id);
   try {
-    await sendToAgent(paseo, session.leadAgentId, buildConsolidationNudgeMessage(), "steer");
+    await sendToAgent(
+      paseo,
+      session.leadAgentId,
+      buildConsolidationNudgeMessage(session.task),
+      "steer",
+    );
     appendEvent(session, {
       kind: "message",
-      message: CONSOLIDATION_NUDGE_EVENT,
+      message: eventMessage,
       agentId: session.leadAgentId,
       lens: null,
     });
@@ -455,6 +744,25 @@ function statusFromEntry(
   if (entry.requiresAttention && entry.attentionReason === "permission") return "needs_input";
   if (current === "done" || current === "blocked" || current === "failed") return current;
   return "idle";
+}
+
+function roleForEntry(
+  session: ReviewSession,
+  entry: AgentListEntry,
+): "translator" | "reviewer" {
+  if (session.translators.some((translator) => translator.agentId === entry.id)) {
+    return "translator";
+  }
+  if (session.reviewers.some((reviewer) => reviewer.agentId === entry.id)) {
+    return "reviewer";
+  }
+  const labelRole = entry.labels[LABEL_ROLE];
+  if (labelRole === ROLE_TRANSLATOR) return "translator";
+  if (labelRole === ROLE_REVIEWER) return "reviewer";
+  if (translationUnitFromTitle(entry.title)) return "translator";
+  return session.task === "translate" && session.phase === "translating"
+    ? "translator"
+    : "reviewer";
 }
 
 export async function reconcileSession(
@@ -487,6 +795,22 @@ export async function reconcileSession(
 
     for (const entry of entries) {
       if (entry.id === session.leadAgentId) continue;
+      if (roleForEntry(session, entry) === "translator") {
+        const existing = findTranslator(session, entry.id);
+        const { translator, created } = upsertTranslator(
+          session,
+          entry,
+          "starting",
+          entry.labels[LABEL_UNIT] ?? null,
+        );
+        translator.status = statusFromEntry(
+          entry,
+          created ? "starting" : (existing?.status ?? translator.status),
+        );
+        translator.lastSeenAt = nowIso();
+        continue;
+      }
+      const existing = findReviewer(session, entry.id);
       const { reviewer, created } = upsertReviewer(
         session,
         entry,
@@ -494,7 +818,10 @@ export async function reconcileSession(
         preset,
         entry.labels[LABEL_LENS],
       );
-      const nextStatus = statusFromEntry(entry, created ? "starting" : reviewer.status);
+      const nextStatus = statusFromEntry(
+        entry,
+        created ? "starting" : (existing?.status ?? reviewer.status),
+      );
       reviewer.status = nextStatus;
       reviewer.lastSeenAt = nowIso();
     }
@@ -529,7 +856,17 @@ export async function reconcileSession(
 
     refreshStatusFlags(session);
 
-    const toEnrich = session.reviewers
+    const translatorsToEnrich = session.translators
+      .filter(
+        (translator) =>
+          (!translator.reportText || translator.status === "needs_input") &&
+          translator.status !== "archived" &&
+          translator.status !== "failed" &&
+          translator.status !== "running" &&
+          translator.status !== "starting",
+      )
+      .map((translator) => translator.agentId);
+    const reviewersToEnrich = session.reviewers
       .filter(
         (reviewer) =>
           !reviewer.reportText &&
@@ -537,8 +874,9 @@ export async function reconcileSession(
           reviewer.status !== "failed" &&
           reviewer.status !== "running",
       )
-      .slice(0, ENRICH_LIMIT)
       .map((reviewer) => reviewer.agentId);
+
+    const toEnrich = [...translatorsToEnrich, ...reviewersToEnrich].slice(0, ENRICH_LIMIT);
 
     if (!session.finalReport && session.leadAgentId) {
       toEnrich.unshift(session.leadAgentId);
@@ -576,7 +914,37 @@ function handleAgentCreated(
       if (isNew) {
         appendEvent(session, {
           kind: "lead",
-          message: "Lead review dimulai.",
+          message:
+            session.task === "translate"
+              ? "Lead terjemahan dimulai."
+              : "Lead review dimulai.",
+          agentId: event.agent.id,
+          lens: null,
+        });
+      }
+    } else if (role === "translator") {
+      let unitLabel: string | null = null;
+      try {
+        const snapshot = await refreshAgent(paseo, event.agent.id);
+        unitLabel = snapshot?.labels?.[LABEL_UNIT] ?? null;
+      } catch (error) {
+        console.warn(
+          `[review-team] could not read labels of ${event.agent.id}:`,
+          errorMessage(error),
+        );
+      }
+
+      const { translator, created } = upsertTranslator(
+        session,
+        event.agent,
+        "starting",
+        unitLabel,
+      );
+      translator.status = "starting";
+      if (created) {
+        appendEvent(session, {
+          kind: "translator",
+          message: `Penerjemah ${translator.unit} bergabung.`,
           agentId: event.agent.id,
           lens: null,
         });
@@ -613,6 +981,7 @@ function handleAgentCreated(
       }
     }
 
+    refreshStatusFlags(session);
     touchSession(session);
     await store.save(session);
   })().catch((error) => {
@@ -632,6 +1001,12 @@ function handleTurnStarted(
     if (role === "lead") {
       session.leadAgentStatus = "running";
       if (!session.leadState || session.leadState === "needs_input") session.leadState = "working";
+    } else if (role === "translator") {
+      const translator = findTranslator(session, event.agent.id);
+      if (translator) {
+        if (translator.status !== "needs_input") translator.status = "running";
+        translator.lastSeenAt = nowIso();
+      }
     } else {
       const reviewer = findReviewer(session, event.agent.id);
       if (reviewer) {
@@ -670,6 +1045,25 @@ function handleTurnEnded(
           agentId: event.agent.id,
           lens: null,
         });
+      }
+    } else if (role === "translator") {
+      const translator = findTranslator(session, event.agent.id);
+      if (translator) {
+        translator.lastSeenAt = nowIso();
+        if (event.outcome.kind === "failed") {
+          translator.status = "failed";
+          appendEvent(session, {
+            kind: "error",
+            message: `Giliran penerjemah ${translator.unit} gagal: ${event.outcome.error.message}`,
+            agentId: event.agent.id,
+            lens: null,
+          });
+        } else if (
+          (event.outcome.kind === "canceled" || event.outcome.kind === "completed") &&
+          (translator.status === "running" || translator.status === "starting")
+        ) {
+          translator.status = "idle";
+        }
       }
     } else {
       const reviewer = findReviewer(session, event.agent.id);
@@ -716,7 +1110,9 @@ function handlePermissionRequested(
       session.pendingPermissions.push(event.agent.id);
     }
 
-    const reviewer = findReviewer(session, event.agent.id);
+    const translator = findTranslator(session, event.agent.id);
+    if (translator) translator.status = "needs_input";
+    const reviewer = translator ? undefined : findReviewer(session, event.agent.id);
     if (reviewer) reviewer.status = "needs_input";
     session.status = "needs_input";
 
@@ -726,7 +1122,9 @@ function handlePermissionRequested(
       "Permintaan izin";
     appendEvent(session, {
       kind: "permission",
-      message: `Menunggu izin: ${requestTitle}`,
+      message: translator
+        ? `Menunggu izin untuk penerjemah ${translator.unit}: ${requestTitle}`
+        : `Menunggu izin: ${requestTitle}`,
       agentId: event.agent.id,
       lens: reviewer?.lens ?? null,
     });
@@ -751,7 +1149,11 @@ function handlePermissionResolved(
       (agentId) => agentId !== event.agent.id,
     );
 
-    const reviewer = findReviewer(session, event.agent.id);
+    const translator = findTranslator(session, event.agent.id);
+    if (translator && translator.status === "needs_input") {
+      translator.status = "running";
+    }
+    const reviewer = translator ? undefined : findReviewer(session, event.agent.id);
     if (reviewer && reviewer.status === "needs_input") {
       reviewer.status = "running";
     }
@@ -765,8 +1167,11 @@ function handlePermissionResolved(
 
     appendEvent(session, {
       kind: "permission",
-      message:
-        event.resolution.behavior === "allow" ? "Izin diberikan." : "Izin ditolak.",
+      message: translator
+        ? `Izin penerjemah ${translator.unit} ${event.resolution.behavior === "allow" ? "diberikan" : "ditolak"}.`
+        : event.resolution.behavior === "allow"
+          ? "Izin diberikan."
+          : "Izin ditolak.",
       agentId: event.agent.id,
       lens: reviewer?.lens ?? null,
     });
@@ -800,6 +1205,21 @@ function handleAgentGone(
         lens: null,
       });
     } else {
+      const translator = findTranslator(session, agent.id);
+      if (translator) {
+        translator.status = "archived";
+        translator.lastSeenAt = nowIso();
+        appendEvent(session, {
+          kind: "translator",
+          message: `Penerjemah ${translator.unit} ${reason === "archived" ? "diarsipkan" : "ditutup"}.`,
+          agentId: agent.id,
+          lens: null,
+        });
+        refreshStatusFlags(session);
+        touchSession(session);
+        await store.save(session);
+        return;
+      }
       const reviewer = findReviewer(session, agent.id);
       if (reviewer) {
         reviewer.status = "archived";

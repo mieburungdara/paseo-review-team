@@ -6,10 +6,14 @@ import {
   CustomPresetFileSchema,
   CustomPresetSchema,
   NOVEL_PRESET,
+  TRANSLATE_PRESET,
   lensIdFromTitle,
   presetSummary,
   resolvePreset,
   reviewerLensId,
+  translationConfigFor,
+  translatorLabelFor,
+  translatorPluralFor,
 } from "../shared/presets";
 
 function customOf(id = "novel-alt") {
@@ -28,9 +32,27 @@ function customOf(id = "novel-alt") {
   };
 }
 
+function customTranslateOf(id = "translate-alt") {
+  return {
+    id,
+    label: TRANSLATE_PRESET.label,
+    description: TRANSLATE_PRESET.description,
+    task: "translate" as const,
+    translation: TRANSLATE_PRESET.translation,
+    target: TRANSLATE_PRESET.target,
+    lenses: TRANSLATE_PRESET.lenses,
+    defaultLensIds: TRANSLATE_PRESET.defaultLensIds,
+    depths: TRANSLATE_PRESET.depths,
+    roles: TRANSLATE_PRESET.roles,
+    labels: TRANSLATE_PRESET.labels,
+    ui: TRANSLATE_PRESET.ui,
+    prompt: TRANSLATE_PRESET.prompt,
+  };
+}
+
 describe("built-in presets", () => {
-  it("exposes code and novel with valid default lenses", () => {
-    expect(BUILTIN_PRESETS.map((preset) => preset.id)).toEqual(["code", "novel"]);
+  it("exposes code, novel, and translate with valid default lenses", () => {
+    expect(BUILTIN_PRESETS.map((preset) => preset.id)).toEqual(["code", "novel", "translate"]);
 
     for (const preset of BUILTIN_PRESETS) {
       expect(preset.lenses.length).toBeGreaterThan(0);
@@ -39,6 +61,18 @@ describe("built-in presets", () => {
         expect(preset.lenses.some((lens) => lens.id === lensId)).toBe(true);
       }
     }
+  });
+
+  it("describes the translation preset as English to Indonesian", () => {
+    expect(TRANSLATE_PRESET.task).toBe("translate");
+    expect(TRANSLATE_PRESET.translation?.sourceLanguage).toBe("English");
+    expect(TRANSLATE_PRESET.translation?.targetLanguage).toBe("Indonesian");
+    expect(TRANSLATE_PRESET.translation?.defaultOutputDir).toBe("translated/id");
+    expect(translationConfigFor(TRANSLATE_PRESET).unitLabel).toBe("Bab");
+    expect(translatorLabelFor(TRANSLATE_PRESET)).toBe("Penerjemah");
+    expect(translatorPluralFor(TRANSLATE_PRESET)).toBe("para penerjemah");
+    expect(CODE_PRESET.task).toBe("review");
+    expect(NOVEL_PRESET.translation).toBeNull();
   });
 
   it("keeps the code preset compatible with the old lens ids", () => {
@@ -60,7 +94,13 @@ describe("built-in presets", () => {
   it("summaries never include prompt fragments", () => {
     const summary = presetSummary(NOVEL_PRESET);
     expect(summary.id).toBe("novel");
+    expect(summary.task).toBe("review");
     expect("prompt" in summary).toBe(false);
+
+    const translate = presetSummary(TRANSLATE_PRESET);
+    expect(translate.task).toBe("translate");
+    expect(translate.translation?.defaultOutputDir).toBe("translated/id");
+    expect("prompt" in translate).toBe(false);
   });
 
   it("falls back to the first preset for an unknown id", () => {
@@ -76,13 +116,55 @@ describe("custom preset validation", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.id).toBe("novel-alt");
+      expect(parsed.data.task).toBe("review");
+      expect(parsed.data.translation).toBeNull();
       expect(parsed.data.lenses.map((lens) => lens.id)).toContain("plot");
     }
+  });
+
+  it("accepts a full custom translation preset", () => {
+    const parsed = CustomPresetSchema.safeParse(customTranslateOf());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.task).toBe("translate");
+      expect(parsed.data.translation?.defaultOutputDir).toBe("translated/id");
+      expect(parsed.data.prompt.translatorRole).toBeTruthy();
+    }
+  });
+
+  it("rejects a translation preset without a translation config", () => {
+    const broken = { ...customTranslateOf(), translation: null };
+    expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("rejects an unsafe translation output directory", () => {
+    const base = customTranslateOf();
+    const broken = {
+      ...base,
+      translation: { ...base.translation!, defaultOutputDir: "../outside" },
+    };
+    expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("rejects a translation preset without translator roles and prompts", () => {
+    const base = customTranslateOf();
+    const broken = {
+      ...base,
+      roles: { lead: "Ketua", reviewer: "QA", reviewerPlural: "para QA" },
+      prompt: { ...base.prompt, translatorRole: undefined, translatorRules: undefined, translationFocus: undefined },
+    };
+    expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("rejects a review preset that carries a translation block", () => {
+    const broken = { ...customOf(), translation: TRANSLATE_PRESET.translation };
+    expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
   });
 
   it("rejects reserved ids", () => {
     expect(CustomPresetSchema.safeParse(customOf("code")).success).toBe(false);
     expect(CustomPresetSchema.safeParse(customOf("novel")).success).toBe(false);
+    expect(CustomPresetSchema.safeParse(customTranslateOf("translate")).success).toBe(false);
   });
 
   it("rejects invalid ids", () => {

@@ -1,16 +1,28 @@
 import { z } from "zod";
-import { DEFAULT_LENS_IDS, DEPTHS, LENSES } from "./constants";
+import { DEFAULT_LENS_IDS, DEPTHS, LENSES, MAX_OUTPUT_DIR_LENGTH } from "./constants";
+import { isSafeRelativePath, normalizeRelativePath } from "./translation";
 
 export const PRESET_ID_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 export const DEFAULT_PRESET_ID = "code";
-export const RESERVED_PRESET_IDS = new Set(["code", "novel"]);
+export const RESERVED_PRESET_IDS = new Set(["code", "novel", "translate"]);
 export const MAX_PRESET_LENSES = 8;
 export const MAX_CUSTOM_PRESETS = 25;
 export const MAX_PRESET_FILE_BYTES = 64 * 1024;
 
 export type PresetSource = "builtin" | "custom";
+export type PresetTask = "review" | "translate";
 export type PresetDepthId = "quick" | "standard" | "deep";
 export const PRESET_DEPTH_IDS: readonly PresetDepthId[] = ["quick", "standard", "deep"];
+
+export interface PresetTranslationConfig {
+  sourceLanguage: string;
+  targetLanguage: string;
+  defaultOutputDir: string;
+  unitLabel: string;
+  outputExtension: string;
+  maxUnitsPerSession: number;
+  maxConcurrentTranslators: number;
+}
 
 export interface PresetLens {
   id: string;
@@ -36,6 +48,8 @@ export interface PresetRoles {
   lead: string;
   reviewer: string;
   reviewerPlural: string;
+  translator?: string;
+  translatorPlural?: string;
 }
 
 export interface PresetVerdictLabels {
@@ -68,6 +82,9 @@ export interface PresetPrompt {
   verdictGuidance: string;
   locationExample: string;
   reportLanguage: string;
+  translatorRole?: string;
+  translatorRules?: string[];
+  translationFocus?: string[];
 }
 
 export interface PresetClientConfig {
@@ -75,6 +92,8 @@ export interface PresetClientConfig {
   label: string;
   description: string;
   source: PresetSource;
+  task: PresetTask;
+  translation: PresetTranslationConfig | null;
   target: PresetTarget;
   lenses: PresetLens[];
   defaultLensIds: string[];
@@ -107,12 +126,29 @@ const PresetDepthSchema = z.object({
   guidance: z.string().trim().min(1).max(1000),
 });
 
+export const PresetTranslationConfigSchema = z.object({
+  sourceLanguage: shortText,
+  targetLanguage: shortText,
+  defaultOutputDir: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_OUTPUT_DIR_LENGTH)
+    .transform(normalizeRelativePath),
+  unitLabel: shortText,
+  outputExtension: z.string().trim().regex(/^\.[a-z0-9]{1,10}$/i, "Ekstensi harus seperti \".md\"."),
+  maxUnitsPerSession: z.number().int().min(1).max(50).default(20),
+  maxConcurrentTranslators: z.number().int().min(1).max(8).default(5),
+});
+
 const PresetCoreSchema = z.object({
   id: z
     .string()
     .regex(PRESET_ID_PATTERN, "ID preset harus slug huruf kecil, mis. \"novel-romance\"."),
   label: shortText,
   description: mediumText,
+  task: z.enum(["review", "translate"]).default("review"),
+  translation: PresetTranslationConfigSchema.nullable().default(null),
   target: z.object({
     label: shortText,
     hint: mediumText,
@@ -129,6 +165,8 @@ const PresetCoreSchema = z.object({
     lead: shortText,
     reviewer: shortText,
     reviewerPlural: shortText,
+    translator: shortText.optional(),
+    translatorPlural: shortText.optional(),
   }),
   labels: z.object({
     findings: shortText,
@@ -156,6 +194,9 @@ export const PresetPromptSchema = z.object({
   verdictGuidance: z.string().trim().min(1).max(800),
   locationExample: z.string().trim().min(1).max(120),
   reportLanguage: z.string().trim().min(1).max(40),
+  translatorRole: z.string().trim().min(1).max(600).optional(),
+  translatorRules: ruleList.optional(),
+  translationFocus: z.array(ruleText).min(1).max(8).optional(),
 });
 
 export const PresetClientConfigSchema = PresetCoreSchema.extend({
@@ -170,6 +211,63 @@ export const CustomPresetSchema = PresetCoreSchema.extend({
       code: "custom",
       path: ["id"],
       message: `ID "${preset.id}" dicadangkan untuk preset bawaan.`,
+    });
+  }
+
+  if (preset.task === "translate") {
+    if (!preset.translation) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["translation"],
+        message: "Preset terjemahan wajib punya blok translation.",
+      });
+    } else if (!isSafeRelativePath(preset.translation.defaultOutputDir)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["translation", "defaultOutputDir"],
+        message: "defaultOutputDir harus path relatif yang aman di dalam workspace.",
+      });
+    }
+    if (!preset.roles.translator) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["roles", "translator"],
+        message: "Preset terjemahan wajib punya roles.translator.",
+      });
+    }
+    if (!preset.roles.translatorPlural) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["roles", "translatorPlural"],
+        message: "Preset terjemahan wajib punya roles.translatorPlural.",
+      });
+    }
+    if (!preset.prompt.translatorRole) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["prompt", "translatorRole"],
+        message: "Preset terjemahan wajib punya prompt.translatorRole.",
+      });
+    }
+    if (!preset.prompt.translatorRules) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["prompt", "translatorRules"],
+        message: "Preset terjemahan wajib punya prompt.translatorRules.",
+      });
+    }
+    if (!preset.prompt.translationFocus) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["prompt", "translationFocus"],
+        message: "Preset terjemahan wajib punya prompt.translationFocus.",
+      });
+    }
+  } else if (preset.translation !== null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["translation"],
+      message: "Preset review tidak boleh membawa konfigurasi translation.",
     });
   }
 
@@ -227,6 +325,8 @@ export const CODE_PRESET: PresetDefinition = {
   description:
     "Review perubahan kode dari beberapa lensa teknis, dengan temuan terstruktur dan verdict kelayakan merge.",
   source: "builtin",
+  task: "review",
+  translation: null,
   target: {
     label: "Target review",
     hint: "Jelaskan apa yang harus diperiksa. Sebutkan diff, branch, PR, atau area kode yang relevan agar reviewer tidak menebak.",
@@ -311,6 +411,8 @@ export const NOVEL_PRESET: PresetDefinition = {
   description:
     "Review naskah fiksi dari lensa alur, tokoh, dunia, gaya, dan pacing, dengan catatan revisi yang menjaga suara penulis.",
   source: "builtin",
+  task: "review",
+  translation: null,
   target: {
     label: "Naskah / bab",
     hint: "Sebutkan file naskah, bab, atau adegan yang harus dibaca. Sertakan ringkasan kanon, wiki, atau catatan benang bila tersedia agar reviewer tidak menebak.",
@@ -425,7 +527,166 @@ export const NOVEL_PRESET: PresetDefinition = {
   },
 };
 
-export const BUILTIN_PRESETS: readonly PresetDefinition[] = [CODE_PRESET, NOVEL_PRESET];
+export const TRANSLATE_PRESET: PresetDefinition = {
+  id: "translate",
+  label: "Terjemahan Novel",
+  description:
+    "Terjemahkan naskah Inggris menjadi Indonesia per bab, lalu periksa hasilnya dengan lensa QA yang read-only.",
+  source: "builtin",
+  task: "translate",
+  translation: {
+    sourceLanguage: "English",
+    targetLanguage: "Indonesian",
+    defaultOutputDir: "translated/id",
+    unitLabel: "Bab",
+    outputExtension: ".md",
+    maxUnitsPerSession: 20,
+    maxConcurrentTranslators: 5,
+  },
+  target: {
+    label: "Sumber & rentang bab",
+    hint: "Sebutkan file atau folder sumber dan rentang bab yang diterjemahkan pada sesi ini. Sertakan glosarium, daftar nama, atau kanon bila ada agar penerjemah tidak menebak istilah.",
+    placeholder: "mis. manuscript/en/bab-01.md atau manuscript/en/ (bab 1–20)",
+  },
+  lenses: [
+    {
+      id: "fidelity",
+      label: "Kesetiaan Makna",
+      hint: "Makna, detail, nuansa, dan informasi yang hilang atau ditambahkan.",
+    },
+    {
+      id: "naturalness",
+      label: "Kealamian Bahasa",
+      hint: "Tata bahasa, diksi, dialog, dan ritme bahasa Indonesia yang natural.",
+    },
+    {
+      id: "terminology",
+      label: "Istilah & Nama",
+      hint: "Nama, tempat, gelar, istilah temuan, dan konsistensi glosarium.",
+    },
+    {
+      id: "consistency",
+      label: "Konsistensi & Kontinuitas",
+      hint: "Kesinambungan antar bab, sebutan tokoh, dan keputusan terjemahan lintas unit.",
+    },
+    {
+      id: "format",
+      label: "Format & Kelengkapan",
+      hint: "Unit hilang, berkas kosong/terpotong, heading, pemisah adegan, dan paragraf.",
+    },
+  ],
+  defaultLensIds: ["fidelity", "naturalness", "terminology", "format"],
+  depths: {
+    quick: {
+      label: "Cepat",
+      hint: "Bandingkan sampel unit dan periksa kelengkapan berkas hasil.",
+      guidance:
+        "Check the translated files exist and are complete, then read a representative sample of each unit. Do not audit every paragraph; mark anything you did not read as unverified.",
+    },
+    standard: {
+      label: "Standar",
+      hint: "Bandingkan sumber dan hasil untuk setiap unit, dengan fokus pada makna dan istilah.",
+      guidance:
+        "Compare source and output unit by unit for the selected range. Follow terminology decisions across neighboring units when they affect the verdict.",
+    },
+    deep: {
+      label: "Mendalam",
+      hint: "Audit seluruh rentang, termasuk istilah lintas bab dan kesinambungan antar unit.",
+      guidance:
+        "Audit the full selected range, cross-check terminology and continuity across chapters, and read surrounding units when a decision may repeat. Stop when the remaining uncertainty is documented.",
+    },
+  },
+  roles: {
+    lead: "Ketua",
+    reviewer: "Peninjau QA",
+    reviewerPlural: "para peninjau QA",
+    translator: "Penerjemah",
+    translatorPlural: "para penerjemah",
+  },
+  labels: {
+    findings: "Catatan QA",
+    location: "Bab/berkas",
+    recommendation: "Saran perbaikan",
+    verdicts: {
+      approve: "SIAP",
+      request_changes: "PERLU REVISI",
+      blocked: "TERTAHAN",
+      pass: "LULUS",
+      warn: "CATATAN",
+      fail: "GAGAL",
+    },
+  },
+  ui: {
+    startHint:
+      "Lead membuat penerjemah per bab, menunggu semua unit terminal, lalu membuat peninjau QA. Penerjemah menulis ke folder hasil di workspace; plugin tidak menulis file atau membuat folder.",
+  },
+  prompt: {
+    leadRole:
+      "You are the lead of a Paseo novel translation team. You coordinate translator agents that write an English-to-Indonesian manuscript, then QA reviewers that compare the source and the translation. You are the hub: translators and QA reviewers cannot message each other, so relay anything that crosses units or lenses.",
+    leadRules: [
+      "This session translates a novel. Never edit or overwrite the source files. Every written file must be produced by a translator agent inside the confirmed output folder; never write files yourself.",
+      "Create exactly one translator for each translation unit in the current batch using Paseo's `create_agent` tool. Title each one `Translator: <unit>` and keep the `Translator:` prefix exactly; the plugin uses it to match the agent. Do not create extra agents, worktrees, or workspaces.",
+      "Respect the batch limits stated in this prompt: at most the configured number of concurrent translators, and no more than the configured units for this session. If the requested range is larger, translate only the first batch and tell the operator to continue the remaining range in a new session.",
+      "Give every translator a self-contained brief: source path, output path, language pair, depth, style guidance, glossary, and the translation report protocol. The brief template below is mandatory.",
+      "Do not create a translator for a unit that already has a live translator. If one is archived or failed, you may replace it once for the same unit.",
+      "Do not create QA reviewers until every translator has reached a terminal state: done, blocked, failed, or archived. Then create exactly one QA reviewer for each selected QA lens.",
+      "Paseo notifies you when an agent finishes. Treat that notification as the signal to read its report. You may use `get_agent_status` and `get_agent_activity` to check progress.",
+      "Translators and QA reviewers report only to you. Relay cross-unit terminology and continuity decisions with `send_agent_prompt`; do not expect them to talk to each other.",
+      "Never approve a permission request on your own. If an agent is blocked by a permission, ask the operator in your status note and continue with the other units or lenses.",
+      "If a translator claims DONE but its output path is missing, outside the output folder, or invalid, do not count the unit as complete. Ask that translator to fix it, or flag it in your status note.",
+      "Do not ask the operator for confirmation to start; the session was already approved.",
+    ],
+    reviewerRole:
+      "You are a QA reviewer on a Paseo novel translation team. You compare the English source with the Indonesian translation and report to the lead. You never write or edit files.",
+    reviewerRules: [
+      "Read-only. Never edit, create, delete, rename, or format any file, including the source and the translation. Read and inspect only.",
+      "Do not create other agents, worktrees, or workspaces.",
+      "Read both the source unit and its translated output yourself. Do not trust a summary from the lead, a translator, or a previous report.",
+      "Treat the named source range and its translated outputs as the only scope.",
+      "Judge against the source. Do not rewrite the translation in your report; describe the problem and the smallest useful correction.",
+      "Check that every source unit in scope has a translated output. Report missing, empty, truncated, or clearly corrupted units.",
+      "If a finding belongs to another lens, mention it once and leave the depth to that reviewer.",
+    ],
+    evidenceRules: [
+      "Support every finding with a source location (chapter/paragraph) and a short quote or close paraphrase from both the source and the translation. If you cannot verify it, mark it unverified or omit it.",
+      "Separate a hard translation error from a stylistic preference, and say which one a finding is.",
+    ],
+    consolidationFocus: [
+      "Wait until every QA lens has a usable report or has explicitly failed. If one reviewer is still running while the others are done, wait for it or note the gap; do not fabricate its findings.",
+      "Merge overlapping notes across lenses, prioritise by impact on meaning, readability, and completeness, and resolve contradictions by checking the source and the translation.",
+      "Report missing or broken translation units first, then meaning errors, then terminology and style. Do not add findings the reviewers did not support.",
+      "Do not rewrite the translated manuscript in the report. Describe the issue and point to the affected unit and path.",
+    ],
+    verdictGuidance:
+      "Use `approve` only when every unit in scope is translated, complete, and faithful enough to read, with no high-impact meaning or terminology issue. Use `request_changes` when any high or medium issue needs correction before the translation is used. Use `blocked` when the translation or QA could not be completed. Keep the summary short and concrete.",
+    locationExample: "Bab 3, translated/id/bab-03.md atau null",
+    reportLanguage: "Indonesian",
+    translatorRole:
+      "You are a translator on a Paseo novel translation team. You translate one unit of an English manuscript into Indonesian and write exactly one output file. You report to the lead.",
+    translatorRules: [
+      "Translate faithfully. Preserve the meaning, tone, intent, and information of the source. Do not add, remove, summarize, or censor content.",
+      "Write natural, readable Indonesian. Prefer idiomatic Indonesian syntax over literal English word order, but never change what happens or what a character knows.",
+      "Preserve names, invented terms, titles, and glossary entries exactly as the lead provides them. If a term has no glossary decision, choose one rendering and record it in your notes.",
+      "Keep the structure: chapter headings, scene breaks, paragraph breaks, dialogue, emphasis, and any Markdown formatting.",
+      "You may write only the single output file assigned in your brief, inside the confirmed output folder. Never edit the source, other units, or anything outside the output folder.",
+      "Do not create other agents, worktrees, or workspaces.",
+      "Do not ask the operator for confirmation. The session was already approved. If a permission blocks you, report it in your status note.",
+      "Treat the assigned source unit as the only translation scope. Read surrounding chapters only for context when the lead includes them.",
+    ],
+    translationFocus: [
+      "Meaning fidelity: every sentence of the source is represented, and no new information is introduced.",
+      "Natural Indonesian: grammar, pronouns, honorifics, and dialogue sound like Indonesian prose rather than translated English.",
+      "Terminology: names, places, titles, units, and invented terms follow the glossary consistently.",
+      "Structure: headings, scene breaks, paragraphs, and dialogue formatting match the source.",
+    ],
+  },
+};
+
+export const BUILTIN_PRESETS: readonly PresetDefinition[] = [
+  CODE_PRESET,
+  NOVEL_PRESET,
+  TRANSLATE_PRESET,
+];
 
 export function presetSummaries(presets: readonly PresetDefinition[]): PresetSummary[] {
   return presets.map((preset) => presetSummary(preset));
@@ -437,6 +698,8 @@ export function presetSummary(preset: PresetDefinition): PresetSummary {
     label: preset.label,
     description: preset.description,
     source: preset.source,
+    task: preset.task,
+    translation: preset.translation,
     target: preset.target,
     lenses: preset.lenses,
     defaultLensIds: preset.defaultLensIds,
@@ -456,6 +719,23 @@ export function resolvePreset(
   id: string | null | undefined,
 ): PresetDefinition {
   return presets.find((preset) => preset.id === id) ?? presets[0] ?? CODE_PRESET;
+}
+
+export function translationConfigFor(
+  preset: Pick<PresetClientConfig, "id" | "task" | "translation">,
+): PresetTranslationConfig {
+  if (preset.task !== "translate" || !preset.translation) {
+    throw new Error(`Preset "${preset.id}" bukan preset terjemahan yang lengkap.`);
+  }
+  return preset.translation;
+}
+
+export function translatorLabelFor(preset: Pick<PresetClientConfig, "roles">): string {
+  return preset.roles.translator?.trim() || "Penerjemah";
+}
+
+export function translatorPluralFor(preset: Pick<PresetClientConfig, "roles">): string {
+  return preset.roles.translatorPlural?.trim() || "para penerjemah";
 }
 
 export function lensLabelFor(

@@ -12,6 +12,8 @@ import type { ProviderOption, ReviewSession, SetupDefaults } from "../shared/con
 import {
   presetSummaries,
   resolvePreset,
+  translationConfigFor,
+  translatorLabelFor,
   type PresetDefinition,
 } from "../shared/presets";
 import {
@@ -20,6 +22,7 @@ import {
   buildReportRequestMessage,
   buildStopMessage,
 } from "../shared/prompts";
+import { isSafeRelativePath, normalizeRelativePath } from "../shared/translation";
 import {
   archiveAgent,
   enableAgentTools,
@@ -31,6 +34,7 @@ import {
 import { reconcileSession } from "./observer";
 import { loadPresetCatalog } from "./presets";
 import { appendEvent, store, touchSession } from "./store";
+import { outputDirAbsolute, validateOutputDir } from "./translation";
 
 const ACTIVE_STATUSES = new Set(["starting", "running", "needs_input"]);
 
@@ -58,18 +62,28 @@ function defaultsFor(
       ? Array.from(new Set(saved.lenses.filter((lens) => allowed.has(lens)))).slice(0, 8)
       : [];
 
+  const savedOutputDir =
+    saved && saved.presetId === preset.id && saved.outputDir && isSafeRelativePath(saved.outputDir)
+      ? normalizeRelativePath(saved.outputDir)
+      : null;
+  const outputDir =
+    preset.task === "translate"
+      ? (savedOutputDir ?? preset.translation?.defaultOutputDir ?? null)
+      : null;
+
   return {
     presetId: preset.id,
     provider: provider?.id ?? saved?.provider ?? null,
     model: model?.id ?? saved?.model ?? null,
     lenses: savedLenses.length > 0 ? savedLenses : [...preset.defaultLensIds],
     depth: saved?.depth ?? "standard",
+    outputDir,
   };
 }
 
 function findSession(sessionId: string): ReviewSession {
   const session = store.get(sessionId);
-  if (!session) throw new Error("Sesi review tidak ditemukan.");
+  if (!session) throw new Error("Sesi tidak ditemukan.");
   return session;
 }
 
@@ -149,6 +163,7 @@ export async function startSession(
     modelId: string;
     modeId?: string | null;
     thinkingOptionId?: string | null;
+    outputDir?: string;
   },
   { paseo }: PluginHandlerContext,
 ) {
@@ -161,7 +176,9 @@ export async function startSession(
   const agentTools = await readAgentTools(paseo);
   if (!agentTools) {
     throw new Error(
-      "Agent tools Paseo belum aktif. Aktifkan dulu agar lead bisa membuat reviewer lewat create_agent.",
+      preset.task === "translate"
+        ? "Agent tools Paseo belum aktif. Aktifkan dulu agar lead bisa membuat penerjemah dan peninjau QA lewat create_agent."
+        : "Agent tools Paseo belum aktif. Aktifkan dulu agar lead bisa membuat reviewer lewat create_agent.",
     );
   }
 
@@ -173,7 +190,7 @@ export async function startSession(
     existing.phase !== "stopped" &&
     existing.phase !== "failed"
   ) {
-    throw new Error("Masih ada sesi review aktif di workspace ini. Hentikan dulu sesi tersebut.");
+    throw new Error("Masih ada sesi aktif di workspace ini. Hentikan dulu sesi tersebut.");
   }
 
   const lenses = Array.from(new Set(input.lenses.map((lens) => lens.trim()).filter(Boolean)));
@@ -206,11 +223,45 @@ export async function startSession(
   const sessionId = randomUUID();
   const createdAt = nowIso();
 
+  const isTranslation = preset.task === "translate";
+  const translationConfig = isTranslation ? translationConfigFor(preset) : null;
+  let outputDir: string | null = null;
+  let workspaceDirectory: string | null = null;
+
+  if (isTranslation && translationConfig) {
+    const requested = input.outputDir?.trim() ?? "";
+    if (!requested) {
+      throw new Error("Folder hasil wajib diisi untuk preset Terjemahan Novel.");
+    }
+    const directory = snapshot.workspaceDirectory?.trim();
+    if (!directory) {
+      throw new Error(
+        "Workspace ini tidak punya folder lokal di daemon. Buka workspace dari checkout lokal agar penerjemah bisa menulis hasil.",
+      );
+    }
+    const validated = await validateOutputDir(directory, requested);
+    outputDir = validated.relative;
+    workspaceDirectory = validated.workspace;
+  } else if (input.outputDir?.trim()) {
+    throw new Error("Folder hasil hanya dipakai preset terjemahan. Pilih preset Terjemahan Novel.");
+  }
+
   const session: ReviewSession = {
     id: sessionId,
     presetId: preset.id,
+    task: preset.task,
+    translation:
+      isTranslation && translationConfig && outputDir
+        ? {
+            sourceLanguage: translationConfig.sourceLanguage,
+            targetLanguage: translationConfig.targetLanguage,
+            outputDir,
+            unitLabel: translationConfig.unitLabel,
+          }
+        : null,
     workspaceId: actualWorkspaceId,
     workspaceName,
+    workspaceDirectory,
     target: input.target,
     lenses,
     depth: input.depth,
@@ -225,6 +276,7 @@ export async function startSession(
     leadState: null,
     leadNote: null,
     reviewers: [],
+    translators: [],
     findings: [],
     finalReport: null,
     finalSummary: null,
@@ -244,7 +296,9 @@ export async function startSession(
 
   appendEvent(session, {
     kind: "session",
-    message: `Sesi ${preset.label} dimulai untuk ${workspaceName} dengan ${lenses.length} lensa.`,
+    message: isTranslation
+      ? `Sesi ${preset.label} dimulai untuk ${workspaceName}: ${lenses.length} lensa QA, folder hasil ${outputDir}.`
+      : `Sesi ${preset.label} dimulai untuk ${workspaceName} dengan ${lenses.length} lensa.`,
     agentId: null,
     lens: null,
   });
@@ -259,6 +313,8 @@ export async function startSession(
       depth: input.depth,
       provider: combined,
       preset,
+      outputDir,
+      outputDirAbsolute: outputDirAbsolute(session),
     });
 
     const lead = await workspace.agents.create({
@@ -280,10 +336,12 @@ export async function startSession(
     session.leadTitle = `Review Team Lead [${sessionId.slice(0, 8)}] — ${workspaceName}`;
     session.leadAgentStatus = "initializing";
     session.status = "running";
-    session.phase = "reviewing";
+    session.phase = isTranslation ? "translating" : "reviewing";
     appendEvent(session, {
       kind: "lead",
-      message: "Lead dibuat dan mulai menyiapkan reviewer.",
+      message: isTranslation
+        ? "Lead dibuat dan mulai menyiapkan batch penerjemah."
+        : "Lead dibuat dan mulai menyiapkan reviewer.",
       agentId: lead.id,
       lens: null,
     });
@@ -297,6 +355,7 @@ export async function startSession(
         model: input.modelId,
         lenses,
         depth: input.depth,
+        outputDir,
       })
       .catch((error) => {
         console.warn("[review-team] could not save setup defaults:", errorMessage(error));
@@ -306,7 +365,9 @@ export async function startSession(
   } catch (error) {
     session.status = "failed";
     session.phase = "failed";
-    session.error = `Gagal membuat lead review: ${errorMessage(error)}`;
+    session.error = isTranslation
+      ? `Gagal membuat lead terjemahan: ${errorMessage(error)}`
+      : `Gagal membuat lead review: ${errorMessage(error)}`;
     appendEvent(session, {
       kind: "error",
       message: session.error,
@@ -342,13 +403,18 @@ export async function sendLeadMessage(
 ) {
   await store.ensureLoaded();
   const session = findSession(sessionId);
-  if (session.status === "stopped") throw new Error("Sesi review sudah dihentikan.");
+  if (session.status === "stopped") throw new Error("Sesi sudah dihentikan.");
   if (!session.leadAgentId) throw new Error("Lead belum siap.");
 
   const trimmed = text.trim().slice(0, MAX_MESSAGE_LENGTH);
   if (!trimmed) throw new Error("Pesan kosong.");
 
-  await sendToAgent(paseo, session.leadAgentId, buildOperatorMessage(trimmed), "steer");
+  await sendToAgent(
+    paseo,
+    session.leadAgentId,
+    buildOperatorMessage(trimmed, session.task),
+    "steer",
+  );
   appendEvent(session, {
     kind: "message",
     message: "Pesan operator dikirim ke lead.",
@@ -365,10 +431,15 @@ export async function requestReport(
 ) {
   await store.ensureLoaded();
   const session = findSession(sessionId);
-  if (session.status === "stopped") throw new Error("Sesi review sudah dihentikan.");
+  if (session.status === "stopped") throw new Error("Sesi sudah dihentikan.");
   if (!session.leadAgentId) throw new Error("Lead belum siap.");
 
-  await sendToAgent(paseo, session.leadAgentId, buildReportRequestMessage(), "steer");
+  await sendToAgent(
+    paseo,
+    session.leadAgentId,
+    buildReportRequestMessage(session.task),
+    "steer",
+  );
   appendEvent(session, {
     kind: "message",
     message: "Operator meminta laporan konsolidasi.",
@@ -390,14 +461,15 @@ export async function stopSession(
     const wasRunning =
       session.leadAgentStatus === "running" ||
       session.pendingPermissions.length > 0 ||
-      session.reviewers.some((reviewer) => reviewer.status === "running");
+      session.reviewers.some((reviewer) => reviewer.status === "running") ||
+      session.translators.some((translator) => translator.status === "running");
 
     session.status = "stopped";
     if (session.phase !== "complete") session.phase = "stopped";
     session.stoppedAt = nowIso();
     appendEvent(session, {
       kind: "session",
-      message: "Sesi review dihentikan oleh operator.",
+      message: "Sesi dihentikan oleh operator.",
       agentId: session.leadAgentId,
       lens: null,
     });
@@ -415,17 +487,41 @@ export async function stopSession(
 
   const warnings: string[] = [];
   if (archiveAgents) {
-    if (session.leadAgentId || session.reviewers.length > 0) {
+    if (
+      session.leadAgentId ||
+      session.reviewers.length > 0 ||
+      session.translators.length > 0
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 800));
     }
 
-    const targets: Array<{ id: string; label: string; reviewerLens?: string }> = [];
+    const catalog = await loadPresetCatalog();
+    const preset = resolvePreset(catalog.presets, session.presetId);
+    const translatorName = translatorLabelFor(preset);
+
+    const targets: Array<{
+      id: string;
+      label: string;
+      kind: "lead" | "reviewer" | "translator";
+    }> = [];
     if (session.leadAgentId) {
-      targets.push({ id: session.leadAgentId, label: "Lead" });
+      targets.push({ id: session.leadAgentId, label: "Lead", kind: "lead" });
     }
     for (const reviewer of session.reviewers) {
       if (reviewer.status === "archived") continue;
-      targets.push({ id: reviewer.agentId, label: `Reviewer ${reviewer.lens}`, reviewerLens: reviewer.lens });
+      targets.push({
+        id: reviewer.agentId,
+        label: `Reviewer ${reviewer.lens}`,
+        kind: "reviewer",
+      });
+    }
+    for (const translator of session.translators) {
+      if (translator.status === "archived") continue;
+      targets.push({
+        id: translator.agentId,
+        label: `${translatorName} ${translator.unit}`,
+        kind: "translator",
+      });
     }
 
     const results = await Promise.allSettled(
@@ -435,11 +531,16 @@ export async function stopSession(
     results.forEach((result, index) => {
       const target = targets[index];
       if (result.status === "fulfilled") {
-        if (target.reviewerLens) {
+        if (target.kind === "reviewer") {
           const reviewer = session.reviewers.find(
             (entry) => entry.agentId === target.id,
           );
           if (reviewer) reviewer.status = "archived";
+        } else if (target.kind === "translator") {
+          const translator = session.translators.find(
+            (entry) => entry.agentId === target.id,
+          );
+          if (translator) translator.status = "archived";
         } else {
           session.leadAgentStatus = "closed";
         }

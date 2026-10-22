@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CODE_PRESET, NOVEL_PRESET } from "../shared/presets";
-import { buildLeadPrompt } from "../shared/prompts";
+import { CODE_PRESET, NOVEL_PRESET, TRANSLATE_PRESET } from "../shared/presets";
+import {
+  buildConsolidationNudgeMessage,
+  buildLeadPrompt,
+  buildOperatorMessage,
+  buildReportRequestMessage,
+  buildStopMessage,
+} from "../shared/prompts";
 
 const BASE = {
   sessionId: "session-1",
@@ -62,5 +68,46 @@ describe("buildLeadPrompt", () => {
     expect(prompt).toContain("Pacing & Pembaca");
     expect(prompt).not.toContain("Alur & Benang (`plot`)");
     expect(prompt).not.toContain("Konsistensi Tokoh (`character`)");
+  });
+
+  it("builds a two-phase translation prompt with the translation protocol", () => {
+    const prompt = buildLeadPrompt({
+      ...BASE,
+      target: "manuscript/en/ (bab 1–20)",
+      preset: TRANSLATE_PRESET,
+      lenses: ["fidelity", "naturalness"],
+      outputDir: "translated/id",
+      outputDirAbsolute: "C:/workspace/translated/id",
+    });
+
+    expect(prompt).toContain("novel translation team");
+    expect(prompt).toContain("English → Indonesian");
+    expect(prompt).toContain("Source range: manuscript/en/ (bab 1–20)");
+    expect(prompt).toContain("Output folder (workspace-relative): `translated/id`");
+    expect(prompt).toContain("Output folder on disk: `C:/workspace/translated/id`");
+    expect(prompt).toContain("Phase 1 — create translators");
+    expect(prompt).toContain("Phase 2 — create QA reviewers");
+    expect(prompt).toContain("review-team.role");
+    expect(prompt).toContain("review-team.unit");
+    expect(prompt).toContain("Translator: <unit>");
+    expect(prompt).toContain("TRANSLATION_REPORT: DONE|BLOCKED|FAILED");
+    expect(prompt).toContain("translation-output");
+    expect(prompt).toContain("Kesetiaan Makna");
+    expect(prompt).toContain("Kealamian Bahasa");
+    expect(prompt).not.toContain("Pacing & Pembaca");
+    expect(prompt).toContain("=== REVIEW TEAM REPORT BEGIN ===");
+    expect(prompt).toContain("=== REVIEW TEAM REPORT END ===");
+    expect(prompt).toContain("review-final");
+    expect(prompt).toContain("review-findings");
+    expect(prompt).toContain("at most 20 bab");
+  });
+
+  it("makes follow-up messages task-aware", () => {
+    expect(buildConsolidationNudgeMessage("translate")).toContain("translation units");
+    expect(buildReportRequestMessage("translate")).toContain("translation report");
+    expect(buildOperatorMessage("fokus bab 3", "translate")).toContain("output folder");
+    expect(buildOperatorMessage("fokus bab 3")).toContain("read-only scope");
+    expect(buildStopMessage()).toContain("stopped this session");
+    expect(buildStopMessage()).not.toContain("review session");
   });
 });

@@ -3,20 +3,26 @@ export const PLUGIN_ID = "review-team";
 export const LABEL_SESSION = "review-team.session";
 export const LABEL_ROLE = "review-team.role";
 export const LABEL_LENS = "review-team.lens";
+export const LABEL_UNIT = "review-team.unit";
 export const LABEL_PRESET = "review-team.preset";
 
 export const ROLE_LEAD = "lead";
 export const ROLE_REVIEWER = "reviewer";
+export const ROLE_TRANSLATOR = "translator";
 
 export const REPORT_BEGIN = "=== REVIEW TEAM REPORT BEGIN ===";
 export const REPORT_END = "=== REVIEW TEAM REPORT END ===";
 export const FINAL_FENCE = "review-final";
 export const FINDINGS_FENCE = "review-findings";
+export const TRANSLATION_FENCE = "translation-output";
 
 export const MAX_EVENTS = 200;
 export const MAX_MESSAGE_LENGTH = 4000;
 export const MAX_REPORT_TEXT = 12_000;
 export const MAX_FINDINGS = 50;
+export const MAX_UNIT_LENGTH = 120;
+export const MAX_OUTPUT_DIR_LENGTH = 300;
+export const MAX_TRANSLATION_NOTES = 20;
 
 export const ENRICH_DELAY_MS = 300;
 export const RECONCILE_INTERVAL_MS = 15_000;

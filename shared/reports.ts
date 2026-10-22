@@ -3,8 +3,10 @@ import {
   FINAL_FENCE,
   MAX_FINDINGS,
   MAX_REPORT_TEXT,
+  MAX_TRANSLATION_NOTES,
   REPORT_BEGIN,
   REPORT_END,
+  TRANSLATION_FENCE,
 } from "./constants";
 
 export type Severity = "high" | "medium" | "low";
@@ -45,6 +47,20 @@ export interface ParsedFinalReport {
   findings: ParsedFinding[];
   parsed: boolean;
   unparsedJson: boolean;
+}
+
+export type TranslationReportMarker = "done" | "blocked" | "failed";
+
+export interface ParsedTranslationReport {
+  marker: TranslationReportMarker | null;
+  unit: string | null;
+  source: string | null;
+  output: string | null;
+  summary: string | null;
+  notes: string[];
+  parsed: boolean;
+  unparsedJson: boolean;
+  raw: string;
 }
 
 interface TimelineEntryLike {
@@ -222,6 +238,69 @@ export function parseReviewerReport(text: string): ParsedReviewerReport {
   };
 }
 
+function asNotes(value: unknown): string[] {
+  if (typeof value === "string") {
+    const note = asString(value, 1000);
+    return note ? [note] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === "string" ? asString(entry, 1000) : null))
+    .filter((entry): entry is string => entry !== null)
+    .slice(0, MAX_TRANSLATION_NOTES);
+}
+
+export function parseTranslationReport(text: string): ParsedTranslationReport {
+  const raw = text.slice(0, MAX_REPORT_TEXT);
+  const markerMatch = lastRegexMatch(raw, /TRANSLATION_REPORT:\s*(DONE|BLOCKED|FAILED)/i);
+  const marker = markerMatch
+    ? (markerMatch[1].toLowerCase() as TranslationReportMarker)
+    : null;
+
+  const jsonSource = extractFencedBlock(raw, TRANSLATION_FENCE);
+  if (!jsonSource) {
+    return {
+      marker,
+      unit: null,
+      source: null,
+      output: null,
+      summary: null,
+      notes: [],
+      parsed: false,
+      unparsedJson: false,
+      raw,
+    };
+  }
+
+  const { value, error } = parseJsonObject(jsonSource);
+  if (error || typeof value !== "object" || value === null) {
+    return {
+      marker,
+      unit: null,
+      source: null,
+      output: null,
+      summary: null,
+      notes: [],
+      parsed: false,
+      unparsedJson: true,
+      raw,
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    marker,
+    unit: asString(record.unit, 120),
+    source: asString(record.source, 500),
+    output: asString(record.output, 500),
+    summary: asString(record.summary, 4000),
+    notes: asNotes(record.notes),
+    parsed: true,
+    unparsedJson: false,
+    raw,
+  };
+}
+
 export function parseLeadStatus(text: string): ParsedLeadStatus | null {
   const match = lastRegexMatch(
     text,
@@ -233,6 +312,7 @@ export function parseLeadStatus(text: string): ParsedLeadStatus | null {
   return { state, note };
 }
 
+/** Reviewers and translators share the same status-line grammar. */
 export function parseReviewerStatus(
   text: string,
 ): { state: ReviewerState; note: string } | null {

@@ -95,6 +95,129 @@
         "locationExample": "Bagian 2.3 atau null",
         "reportLanguage": "Indonesian"
       }
+    },
+    {
+      "id": "novel-fr-id",
+      "label": "Terjemahan Prancis",
+      "description": "Terjemahkan naskah Prancis menjadi Indonesia per bab, lalu periksa hasilnya dengan lensa QA kesetiaan makna dan gaya.",
+      "task": "translate",
+      "translation": {
+        "sourceLanguage": "French",
+        "targetLanguage": "Indonesian",
+        "defaultOutputDir": "translated/id-fr",
+        "unitLabel": "Bab",
+        "outputExtension": ".md",
+        "maxUnitsPerSession": 12,
+        "maxConcurrentTranslators": 4
+      },
+      "target": {
+        "label": "Sumber & rentang bab",
+        "hint": "Sebutkan file atau folder sumber dan rentang bab untuk sesi ini. Sertakan glosarium atau daftar nama bila ada.",
+        "placeholder": "mis. manuscript/fr/ (bab 1–12)"
+      },
+      "lenses": [
+        {
+          "id": "fidelity",
+          "label": "Kesetiaan Makna",
+          "hint": "Makna, detail, nuansa, dan informasi yang hilang atau ditambahkan."
+        },
+        {
+          "id": "style",
+          "label": "Gaya",
+          "hint": "Diksi, dialog, dan ritme bahasa Indonesia."
+        }
+      ],
+      "defaultLensIds": ["fidelity", "style"],
+      "depths": {
+        "quick": {
+          "label": "Cepat",
+          "hint": "Sampel unit dan kelengkapan berkas hasil.",
+          "guidance": "Check that the translated files exist and are complete, then read a representative sample of each unit. Mark anything you did not read as unverified."
+        },
+        "standard": {
+          "label": "Standar",
+          "hint": "Semua unit dalam rentang sesi.",
+          "guidance": "Compare every unit in scope against the source, focusing on meaning, names, and style decisions."
+        },
+        "deep": {
+          "label": "Mendalam",
+          "hint": "Semua unit dan keputusan lintas bab.",
+          "guidance": "Audit the full range and cross-check terminology and style decisions across chapters. Stop when the remaining uncertainty is documented."
+        }
+      },
+      "roles": {
+        "lead": "Ketua",
+        "reviewer": "Peninjau QA",
+        "reviewerPlural": "para peninjau QA",
+        "translator": "Penerjemah",
+        "translatorPlural": "para penerjemah"
+      },
+      "labels": {
+        "findings": "Catatan QA",
+        "location": "Bab/berkas",
+        "recommendation": "Saran perbaikan",
+        "verdicts": {
+          "approve": "SIAP",
+          "request_changes": "PERLU REVISI",
+          "blocked": "TERTAHAN",
+          "pass": "LULUS",
+          "warn": "CATATAN",
+          "fail": "GAGAL"
+        }
+      },
+      "ui": {
+        "startHint": "Penerjemah menulis hasil ke folder workspace; QA berjalan setelah semua unit terminal."
+      },
+      "prompt": {
+        "leadRole": "You are the lead of a Paseo French-to-Indonesian novel translation team. You coordinate translators that write an Indonesian manuscript and QA reviewers that compare source and output. You are the hub between units and lenses.",
+        "leadRules": [
+          "This session translates a novel. Never edit or overwrite the source files. Every written file must be produced by a translator agent inside the confirmed output folder; never write files yourself.",
+          "Create exactly one translator for each translation unit in the current batch using Paseo's `create_agent` tool. Title each one `Translator: <unit>` and keep the `Translator:` prefix exactly; the plugin uses it to match the agent.",
+          "Respect the configured limits: at most 4 concurrent translators and no more than 12 units for this session. Translate only the first batch and tell the operator to continue the remaining range in a new session.",
+          "Give every translator a self-contained brief: source path, output path, language pair, depth, style guidance, glossary, and the translation report protocol.",
+          "Do not create QA reviewers until every translator has reached a terminal state: done, blocked, failed, or archived. Then create exactly one QA reviewer for each selected QA lens.",
+          "Translators and QA reviewers report only to you. Relay cross-unit terminology and continuity decisions with `send_agent_prompt`.",
+          "Never approve a permission request on your own. If an agent is blocked by a permission, ask the operator in your status note.",
+          "If a translator claims DONE but its output path is missing, outside the output folder, or invalid, do not count the unit as complete. Ask that translator to fix it, or flag it in your status note."
+        ],
+        "reviewerRole": "You are a QA reviewer on a Paseo novel translation team. You compare the French source with the Indonesian translation and report to the lead. You never write or edit files.",
+        "reviewerRules": [
+          "Read-only. Never edit, create, delete, rename, or format any file, including the source and the translation.",
+          "Do not create other agents, worktrees, or workspaces.",
+          "Read both the source unit and its translated output yourself. Do not trust a summary from the lead or a translator.",
+          "Treat the named source range and its translated outputs as the only scope.",
+          "Judge against the source. Describe the problem and the smallest useful correction instead of rewriting the translation.",
+          "Check that every source unit in scope has a translated output. Report missing, empty, truncated, or corrupted units."
+        ],
+        "evidenceRules": [
+          "Support every finding with a source location (chapter/paragraph) and a short quote or close paraphrase from both the source and the translation. If you cannot verify it, mark it unverified or omit it.",
+          "Separate a hard translation error from a stylistic preference, and say which one a finding is."
+        ],
+        "consolidationFocus": [
+          "Wait until every QA lens has a usable report or has explicitly failed.",
+          "Merge overlapping notes across lenses, prioritise by impact on meaning and readability, and resolve contradictions by checking the source and the translation.",
+          "Report missing or broken units first, then meaning errors, then terminology and style. Do not add findings the reviewers did not support."
+        ],
+        "verdictGuidance": "Use `approve` only when every unit in scope is translated, complete, and faithful enough to read, with no high-impact meaning or terminology issue. Use `request_changes` when any high or medium issue needs correction. Use `blocked` when the translation or QA could not be completed.",
+        "locationExample": "Bab 3, translated/id-fr/bab-03.md atau null",
+        "reportLanguage": "Indonesian",
+        "translatorRole": "You are a translator on a Paseo novel translation team. You translate one unit of a French manuscript into Indonesian and write exactly one output file. You report to the lead.",
+        "translatorRules": [
+          "Translate faithfully. Preserve the meaning, tone, intent, and information of the source. Do not add, remove, summarize, or censor content.",
+          "Write natural, readable Indonesian. Prefer idiomatic Indonesian syntax over literal French word order, but never change what happens or what a character knows.",
+          "Preserve names, invented terms, titles, and glossary entries exactly as the lead provides them. If a term has no glossary decision, choose one rendering and record it in your notes.",
+          "Keep the structure: chapter headings, scene breaks, paragraph breaks, dialogue, emphasis, and any Markdown formatting.",
+          "You may write only the single output file assigned in your brief, inside the confirmed output folder. Never edit the source or anything outside the output folder.",
+          "Do not create other agents, worktrees, or workspaces.",
+          "Do not ask the operator for confirmation. If a permission blocks you, report it in your status note."
+        ],
+        "translationFocus": [
+          "Meaning fidelity: every sentence of the source is represented, and no new information is introduced.",
+          "Natural Indonesian: grammar, pronouns, honorifics, and dialogue sound like Indonesian prose.",
+          "Terminology: names, places, titles, and invented terms follow the glossary consistently.",
+          "Structure: headings, scene breaks, paragraphs, and dialogue formatting match the source."
+        ]
+      }
     }
   ]
 }

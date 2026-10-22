@@ -4,6 +4,7 @@ import {
   parseLeadStatus,
   parseReviewerReport,
   parseReviewerStatus,
+  parseTranslationReport,
   recentAssistantText,
 } from "../shared/reports";
 
@@ -62,6 +63,84 @@ describe("parseReviewerReport", () => {
   it("returns a marker without JSON", () => {
     const parsed = parseReviewerReport("REVIEW_REPORT: BLOCKED\nNo access to the repository.");
     expect(parsed.marker).toBe("blocked");
+    expect(parsed.parsed).toBe(false);
+    expect(parsed.unparsedJson).toBe(false);
+  });
+});
+
+describe("parseTranslationReport", () => {
+  it("parses the marker and the fenced translation output", () => {
+    const text = [
+      "Bab 1 sudah diterjemahkan.",
+      "TRANSLATION_REPORT: DONE",
+      "```translation-output",
+      JSON.stringify({
+        unit: "Bab 1",
+        source: "manuscript/en/bab-01.md",
+        output: "translated/id/bab-01.md",
+        summary: "Selesai dengan glosarium yang sama.",
+        notes: ["Nama tempat dipertahankan."],
+      }),
+      "```",
+      "REVIEW_STATUS: DONE — file tertulis",
+    ].join("\n");
+
+    const parsed = parseTranslationReport(text);
+    expect(parsed.marker).toBe("done");
+    expect(parsed.parsed).toBe(true);
+    expect(parsed.unit).toBe("Bab 1");
+    expect(parsed.source).toBe("manuscript/en/bab-01.md");
+    expect(parsed.output).toBe("translated/id/bab-01.md");
+    expect(parsed.notes).toEqual(["Nama tempat dipertahankan."]);
+    expect(parsed.raw).toContain("translation-output");
+  });
+
+  it("takes the last marker and the last fenced block", () => {
+    const text = [
+      "TRANSLATION_REPORT: BLOCKED",
+      "```translation-output",
+      '{"unit":"Bab 1","output":"translated/id/bab-01.md"}',
+      "```",
+      "TRANSLATION_REPORT: DONE",
+      "```translation-output",
+      '{"unit":"Bab 2","output":"translated/id/bab-02.md"}',
+      "```",
+    ].join("\n");
+
+    const parsed = parseTranslationReport(text);
+    expect(parsed.marker).toBe("done");
+    expect(parsed.unit).toBe("Bab 2");
+    expect(parsed.output).toBe("translated/id/bab-02.md");
+  });
+
+  it("keeps a blocked marker without a report block", () => {
+    const parsed = parseTranslationReport(
+      "TRANSLATION_REPORT: BLOCKED\nSumber tidak ditemukan.",
+    );
+    expect(parsed.marker).toBe("blocked");
+    expect(parsed.parsed).toBe(false);
+    expect(parsed.unparsedJson).toBe(false);
+    expect(parsed.output).toBeNull();
+  });
+
+  it("flags broken JSON", () => {
+    const text = [
+      "TRANSLATION_REPORT: DONE",
+      "```translation-output",
+      "{not json",
+      "```",
+    ].join("\n");
+    const parsed = parseTranslationReport(text);
+    expect(parsed.parsed).toBe(false);
+    expect(parsed.unparsedJson).toBe(true);
+    expect(parsed.raw).toContain("{not json");
+  });
+
+  it("treats a missing fence as unparsed", () => {
+    const parsed = parseTranslationReport(
+      'TRANSLATION_REPORT: DONE\n{"unit":"Bab 1","output":"translated/id/bab-01.md"}',
+    );
+    expect(parsed.marker).toBe("done");
     expect(parsed.parsed).toBe(false);
     expect(parsed.unparsedJson).toBe(false);
   });
