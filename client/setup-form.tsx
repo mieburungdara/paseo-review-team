@@ -54,6 +54,8 @@ export function SetupForm({
   });
   const [providerId, setProviderId] = useState<string | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [modeId, setModeId] = useState<string | null>(null);
+  const [thinkingOptionId, setThinkingOptionId] = useState<string | null>(null);
   const [lenses, setLenses] = useState<string[] | null>(null);
   const [depth, setDepth] = useState<PresetDepthId | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,6 +74,42 @@ export function SetupForm({
     provider?.models.find((entry) => entry.isDefault) ??
     provider?.models[0] ??
     null;
+
+  const providerIsDefault = provider?.id === state.defaults.provider;
+  const defaultMode = provider
+    ? (provider.modes.find((entry) => entry.id === provider.defaultModeId) ??
+      provider.modes[0] ??
+      null)
+    : null;
+  const savedMode =
+    providerIsDefault && state.defaults.modeId
+      ? provider?.modes.find((entry) => entry.id === state.defaults.modeId)
+      : undefined;
+  const chosenMode =
+    (modeId ? provider?.modes.find((entry) => entry.id === modeId) : undefined) ??
+    savedMode ??
+    defaultMode;
+
+  const modelIsDefault = providerIsDefault && chosenModel?.id === state.defaults.model;
+  const defaultThinking = chosenModel
+    ? (chosenModel.thinkingOptions.find(
+        (entry) => entry.id === chosenModel.defaultThinkingOptionId,
+      ) ??
+      chosenModel.thinkingOptions[0] ??
+      null)
+    : null;
+  const savedThinking =
+    modelIsDefault && state.defaults.thinkingOptionId
+      ? chosenModel?.thinkingOptions.find(
+          (entry) => entry.id === state.defaults.thinkingOptionId,
+        )
+      : undefined;
+  const chosenThinking =
+    (thinkingOptionId
+      ? chosenModel?.thinkingOptions.find((entry) => entry.id === thinkingOptionId)
+      : undefined) ??
+    savedThinking ??
+    defaultThinking;
 
   const selectedLenses = useMemo(() => {
     const raw = lenses ?? (presetIsDefault ? state.defaults.lenses : preset.defaultLensIds);
@@ -180,6 +218,8 @@ export function SetupForm({
         depth: selectedDepth,
         providerId: provider.id,
         modelId: chosenModel.id,
+        modeId: chosenMode?.id ?? null,
+        thinkingOptionId: chosenThinking?.id ?? null,
         ...(isTranslation ? { outputDir: trimmedOutputDir } : {}),
       });
       onStarted(result.session);
@@ -373,6 +413,8 @@ export function SetupForm({
                   onPress={() => {
                     setProviderId(entry.id);
                     setModelId(null);
+                    setModeId(null);
+                    setThinkingOptionId(null);
                   }}
                   selected={provider?.id === entry.id}
                   theme={theme}
@@ -380,23 +422,95 @@ export function SetupForm({
               ))}
             </View>
             {provider ? (
-              <View style={styles.column}>
-                <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "700" }}>
-                  MODEL
-                </Text>
-                <View style={styles.row}>
-                  {provider.models.map((model) => (
-                    <Chip
-                      key={model.id}
-                      disabled={busy}
-                      label={model.label || model.id}
-                      onPress={() => setModelId(model.id)}
-                      selected={chosenModel?.id === model.id}
-                      theme={theme}
-                    />
-                  ))}
+              <>
+                <View style={styles.column}>
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "700" }}>
+                    MODEL
+                  </Text>
+                  <View style={styles.row}>
+                    {provider.models.map((model) => (
+                      <Chip
+                        key={model.id}
+                        disabled={busy}
+                        label={model.label || model.id}
+                        onPress={() => {
+                          setModelId(model.id);
+                          setThinkingOptionId(null);
+                        }}
+                        selected={chosenModel?.id === model.id}
+                        theme={theme}
+                      />
+                    ))}
+                  </View>
                 </View>
-              </View>
+
+                <View style={styles.column}>
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "700" }}>
+                    MODE
+                  </Text>
+                  {provider.modes.length === 0 ? (
+                    <Muted theme={theme}>
+                      Provider ini tidak menyediakan pilihan mode; Paseo memakai bawaan provider.
+                    </Muted>
+                  ) : (
+                    <>
+                      <View style={styles.row}>
+                        {provider.modes.map((mode) => (
+                          <Chip
+                            key={mode.id}
+                            disabled={busy}
+                            label={mode.label || mode.id}
+                            onPress={() => setModeId(mode.id)}
+                            selected={chosenMode?.id === mode.id}
+                            theme={theme}
+                          />
+                        ))}
+                      </View>
+                      {chosenMode?.description ? (
+                        <Muted theme={theme}>{chosenMode.description}</Muted>
+                      ) : null}
+                    </>
+                  )}
+                </View>
+
+                <View style={styles.column}>
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "700" }}>
+                    THINKING LEVEL
+                  </Text>
+                  {chosenModel && chosenModel.thinkingOptions.length > 0 ? (
+                    <>
+                      <View style={styles.row}>
+                        {chosenModel.thinkingOptions.map((option) => (
+                          <Chip
+                            key={option.id}
+                            disabled={busy}
+                            label={option.label || option.id}
+                            onPress={() => setThinkingOptionId(option.id)}
+                            selected={chosenThinking?.id === option.id}
+                            theme={theme}
+                          />
+                        ))}
+                      </View>
+                      {chosenThinking?.description ? (
+                        <Muted theme={theme}>{chosenThinking.description}</Muted>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Muted theme={theme}>
+                      Model ini tidak menyediakan pilihan thinking level.
+                    </Muted>
+                  )}
+                </View>
+
+                <Muted theme={theme}>
+                  Mode dan thinking level dipakai untuk {preset.roles.lead.toLowerCase()} dan semua
+                  agen anak (
+                  {isTranslation
+                    ? `${translatorPluralFor(preset)} dan ${preset.roles.reviewerPlural}`
+                    : preset.roles.reviewerPlural}
+                  ).
+                </Muted>
+              </>
             ) : null}
           </>
         )}

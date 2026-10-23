@@ -331,6 +331,8 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                   {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
                   {sessionPreset.label} · {session.provider} ·{" "}
                   {depthFor(sessionPreset, session.depth).label}
+                  {session.modeId ? ` · mode ${session.modeId}` : ""}
+                  {session.thinkingOptionId ? ` · thinking ${session.thinkingOptionId}` : ""}
                 </Muted>
                 {session.task === "translate" && session.translation ? (
                   <Muted theme={theme}>
@@ -768,6 +770,8 @@ function PastSessionCard({
         {session.workspaceName ?? session.workspaceId ?? "Workspace"} ·{" "}
         {session.coverage.completed}/{session.coverage.total} laporan ·{" "}
         {session.createdAt ? formatClock(session.createdAt) : ""}
+        {session.modeId ? ` · mode ${session.modeId}` : ""}
+        {session.thinkingOptionId ? ` · thinking ${session.thinkingOptionId}` : ""}
       </Muted>
       {session.task === "translate" ? (
         <Muted theme={theme}>

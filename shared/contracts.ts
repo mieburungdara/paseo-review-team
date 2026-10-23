@@ -117,8 +117,8 @@ export const ReviewSessionSchema = z.object({
   lenses: z.array(z.string()),
   depth: z.enum(["quick", "standard", "deep"]),
   provider: z.string(),
-  modeId: z.string().nullable(),
-  thinkingOptionId: z.string().nullable(),
+  modeId: z.string().nullable().default(null),
+  thinkingOptionId: z.string().nullable().default(null),
   status: SessionStatusSchema,
   phase: SessionPhaseSchema,
   leadAgentId: z.string().nullable(),
@@ -147,27 +147,48 @@ export const ReviewSessionSchema = z.object({
 
 export type ReviewSession = z.infer<typeof ReviewSessionSchema>;
 
+export const ProviderModeSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+});
+
+export const ProviderThinkingOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+});
+
+export const ProviderModelSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  isDefault: z.boolean(),
+  thinkingOptions: z.array(ProviderThinkingOptionSchema).default([]),
+  defaultThinkingOptionId: z.string().nullable().default(null),
+});
+
 export const ProviderOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
-  models: z.array(
-    z.object({
-      id: z.string(),
-      label: z.string(),
-      isDefault: z.boolean(),
-    }),
-  ),
+  modes: z.array(ProviderModeSchema).default([]),
+  defaultModeId: z.string().nullable().default(null),
+  models: z.array(ProviderModelSchema),
 });
 
 export const SetupDefaultsSchema = z.object({
   presetId: z.string().max(40).default("code"),
   provider: z.string().nullable(),
   model: z.string().nullable(),
+  modeId: z.string().nullable().default(null),
+  thinkingOptionId: z.string().nullable().default(null),
   lenses: z.array(z.string()),
   depth: z.enum(["quick", "standard", "deep"]),
   outputDir: z.string().max(300).nullable().default(null),
 });
 
+export type ProviderMode = z.infer<typeof ProviderModeSchema>;
+export type ProviderThinkingOption = z.infer<typeof ProviderThinkingOptionSchema>;
+export type ProviderModel = z.infer<typeof ProviderModelSchema>;
 export type ProviderOption = z.infer<typeof ProviderOptionSchema>;
 export type SetupDefaults = z.infer<typeof SetupDefaultsSchema>;
 

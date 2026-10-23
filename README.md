@@ -25,7 +25,7 @@ Plugin ini mengikuti model koordinasi native Paseo: lead membuat agen anak denga
 ## Persyaratan
 
 - Paseo **>= 0.12.0** (daemon dan app).
-- Provider/model yang mendukung tool use. Mode terjemahan membutuhkan model yang dapat menulis file di workspace.
+- Provider/model yang mendukung tool use. Pilihan **Mode** dan **Thinking level** muncul bila provider/model mengeksposnya. Mode terjemahan membutuhkan model yang dapat menulis file di workspace.
 - **Agent tools** Paseo aktif (`mcp.injectIntoAgents`). Lead membutuhkan `create_agent` dan alat agen native lainnya.
   - Panel menampilkan consent gate. Plugin tidak mengaktifkan setelan ini tanpa klik eksplisit.
   - Setelan ini bersifat global di daemon dan hanya berlaku untuk agen yang dimulai setelah diaktifkan.
@@ -54,7 +54,7 @@ Muat ulang plugin dari **Settings → Plugins** jika daemon belum mendeteksinya.
 3. Pilih preset: **Code Review**, **Review Novel**, **Terjemahan Novel**, atau preset custom yang terdeteksi. Label target, daftar lensa, dan pilihan kedalaman mengikuti preset.
 4. Isi target. Untuk kode, misalnya `diff vs main`, `src/auth/login`, atau `PR #42`; untuk novel, misalnya `manuscript/bab-03.md` atau `bab 3–5`; untuk terjemahan, sumber dan rentangnya, misalnya `manuscript/en/bab-01.md` atau `manuscript/en/ (bab 1–20)`.
 5. Untuk preset terjemahan, isi juga **Folder hasil** relatif terhadap workspace, misalnya `translated/id`. Folder ini tidak dibuat oleh plugin.
-6. Pilih lensa, kedalaman, provider, dan model. Mengganti preset mengembalikan lensa, kedalaman, dan folder hasil ke default preset tersebut.
+6. Pilih lensa, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level**; keduanya diterapkan ke lead dan semua agen anak, lalu disimpan sebagai default setup. Mengganti preset mengembalikan lensa, kedalaman, dan folder hasil ke default preset tersebut.
 7. Jika agent tools belum aktif, tinjau penjelasannya lalu aktifkan lewat tombol consent.
 8. Mulai sesi. Untuk review, lead membuat satu reviewer per lensa. Untuk terjemahan, lead membuat penerjemah per bab, lalu peninjau QA setelah semua unit terminal.
 9. Pantau coverage/progres, status lead, kartu reviewer/translator, dan event. Pesan lead bila perlu mengarahkan ulang.
@@ -80,6 +80,7 @@ Panel workspace ◄── laporan akhir ◄── Lead (konsolidasi)
 ```
 
 - Plugin hanya membuat **lead**. Lead yang membuat reviewer atau penerjemah memakai alat agen Paseo, sehingga hierarki dan notifikasi tetap native.
+- Mode dan thinking level yang dipilih dipakai saat membuat lead, lalu diteruskan ke setiap agen anak lewat `settings` pada `create_agent` agar seluruh tim berjalan dengan konfigurasi yang sama.
 - Observer memakai `agent.created`, `turn_started`, `turn_ended`, `permission_requested`, `permission_resolved`, `archived`, dan `closed`, ditambah rekonsiliasi periodik lewat SDK.
 - Agen anak ditemukan dari label `review-team.session`, `review-team.role`, `review-team.lens`, `review-team.unit`, dan label bawaan `paseo.parent-agent-id`.
 - Saat semua lensa sudah memberi hasil, plugin mengirim satu pesan konsolidasi ke lead. Ini adalah jaring pengaman bila notifikasi selesai native tidak membangunkan lead.
@@ -122,7 +123,7 @@ Sumber dan hasil sama-sama berada di **workspace**. Plugin tidak mengakses datab
 2. Pilih preset **Terjemahan Novel**.
 3. Isi **Sumber & rentang bab**, misalnya `manuscript/en/ (bab 1–20)`. Batasi sesi pada satu arc atau volume; default-nya maksimal 20 unit dan 5 penerjemah paralel per sesi.
 4. Isi **Folder hasil** relatif terhadap workspace, misalnya `translated/id`. Folder wajib berada di dalam workspace, bukan root workspace, bukan `.git`, dan tidak boleh keluar lewat `..` atau symlink. Plugin **tidak membuat folder**; buat folder bila perlu atau biarkan penerjemah membuatnya sesuai izin agen.
-5. Pilih lensa QA, kedalaman, provider, dan model. Penerjemah membutuhkan model dan izin yang dapat menulis file; peninjau QA cukup read-only.
+5. Pilih lensa QA, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level** untuk lead, penerjemah, dan peninjau QA. Penerjemah membutuhkan model dan izin yang dapat menulis file; peninjau QA cukup read-only.
 6. Mulai sesi. Lead membuat penerjemah per bab dan meneruskan path sumber, path hasil, bahasa, gaya, glosarium, serta protokol laporan.
 7. Pantau progres unit di panel. Penghitung memakai `selesai/ditemukan` karena total unit baru diketahui dari agen yang benar-benar dibuat; plugin tidak menebak jumlah bab.
 8. Setelah semua unit terminal, lead membuat peninjau QA. QA membandingkan sumber dan hasil per lensa dan melapor hanya kepada lead.

@@ -1,7 +1,7 @@
 {
   "id": "review-team",
   "name": "Review Team",
-  "description": "Ruang tim multi-agen dengan preset Code Review, Review Novel, dan Terjemahan Novel (EN→ID): satu ketua memimpin reviewer paralel atau penerjemah per bab plus QA, lalu menyusun laporan akhir. Preset custom dapat ditambahkan lewat presets.json.",
+  "description": "Ruang tim multi-agen dengan preset Code Review, Review Novel, dan Terjemahan Novel (EN→ID): satu ketua memimpin reviewer paralel atau penerjemah per bab plus QA, dengan pilihan mode dan thinking level untuk seluruh tim, lalu menyusun laporan akhir. Preset custom dapat ditambahkan lewat presets.json.",
   "icon": "assets/icon.png",
   "media": [],
   "requirements": {

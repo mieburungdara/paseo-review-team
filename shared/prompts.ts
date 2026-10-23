@@ -30,6 +30,10 @@ export interface LeadPromptInput {
   lenses: string[];
   depth: string;
   provider: string;
+  modeId?: string | null;
+  modeLabel?: string | null;
+  thinkingOptionId?: string | null;
+  thinkingLabel?: string | null;
   preset: PresetDefinition;
   outputDir?: string | null;
   outputDirAbsolute?: string | null;
@@ -37,6 +41,39 @@ export interface LeadPromptInput {
 
 function bullets(lines: string[]): string[] {
   return lines.map((line) => `- ${line}`);
+}
+
+function settingLabel(label: string | null | undefined, id: string): string {
+  const trimmed = label?.trim();
+  return trimmed ? `${trimmed} (\`${id}\`)` : `\`${id}\``;
+}
+
+function providerSettingLines(input: LeadPromptInput): string[] {
+  return [
+    ...(input.modeId
+      ? [
+          `- Mode for you and every child agent: ${settingLabel(input.modeLabel, input.modeId)}`,
+        ]
+      : []),
+    ...(input.thinkingOptionId
+      ? [
+          `- Thinking level for you and every child agent: ${settingLabel(
+            input.thinkingLabel,
+            input.thinkingOptionId,
+          )}`,
+        ]
+      : []),
+  ];
+}
+
+function childSettingsLine(input: LeadPromptInput): string | null {
+  const settings: { modeId?: string; thinkingOptionId?: string } = {};
+  if (input.modeId) settings.modeId = input.modeId;
+  if (input.thinkingOptionId) settings.thinkingOptionId = input.thinkingOptionId;
+  if (Object.keys(settings).length === 0) return null;
+  return `- \`settings\`: \`${JSON.stringify(
+    settings,
+  )}\`. Use these exact settings for this agent; do not change them per child.`;
 }
 
 export function buildLeadPrompt(input: LeadPromptInput): string {
@@ -53,6 +90,7 @@ function buildReviewLeadPrompt(input: LeadPromptInput): string {
   );
   const lensList = input.lenses.join(", ");
   const location = preset.prompt.locationExample;
+  const settingsLine = childSettingsLine(input);
 
   const lines = [
     preset.prompt.leadRole,
@@ -65,6 +103,7 @@ function buildReviewLeadPrompt(input: LeadPromptInput): string {
     `- Depth: ${depth.label} (\`${input.depth}\`). ${depth.guidance}`,
     `- Lenses: ${lensList}`,
     `- Provider/model for you and every reviewer: ${input.provider}`,
+    ...providerSettingLines(input),
     "",
     "Lens focus:",
     ...lensLines,
@@ -77,6 +116,7 @@ function buildReviewLeadPrompt(input: LeadPromptInput): string {
     '- `workspaceId`: the Paseo workspace id above (so the reviewer lives beside the target, not in your home).',
     '- `title`: `Reviewer: <lens>` using the human lens name. Keep the `Reviewer:` prefix exactly; the plugin uses it to match the agent.',
     `- \`provider\`: \`${input.provider}\`.`,
+    ...(settingsLine ? [settingsLine] : []),
     "- `initialPrompt`: the reviewer brief below, with every placeholder replaced. Keep it complete; do not shorten it.",
     `- \`labels\`: \`{"${LABEL_SESSION}": "${input.sessionId}", "${LABEL_ROLE}": "${ROLE_REVIEWER}", "${LABEL_LENS}": "<lens id>", "${LABEL_PRESET}": "${preset.id}"}\`.`,
     "- `notifyOnFinish`: `true`.",
@@ -157,6 +197,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
   const translatorRules = preset.prompt.translatorRules ?? [];
   const translationFocus = preset.prompt.translationFocus ?? [];
   const reportLanguage = preset.prompt.reportLanguage;
+  const settingsLine = childSettingsLine(input);
 
   const lines = [
     preset.prompt.leadRole,
@@ -172,6 +213,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     `- Depth: ${depth.label} (\`${input.depth}\`). ${depth.guidance}`,
     `- QA lenses: ${lensList}`,
     `- Provider/model for you, every ${translator.toLowerCase()}, and every QA reviewer: ${input.provider}`,
+    ...providerSettingLines(input),
     `- Batch limits for this session: at most ${config.maxUnitsPerSession} ${config.unitLabel.toLowerCase()} and at most ${config.maxConcurrentTranslators} concurrent ${translatorPlural}.`,
     "",
     "QA lens focus:",
@@ -185,6 +227,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     '- `workspaceId`: the Paseo workspace id above (so the agent lives beside the manuscript).',
     `- \`title\`: \`Translator: <unit>\` using the unit name, for example \`Translator: ${config.unitLabel} 1\`. Keep the \`Translator:\` prefix exactly; the plugin uses it to match the agent.`,
     `- \`provider\`: \`${input.provider}\`.`,
+    ...(settingsLine ? [settingsLine] : []),
     "- `initialPrompt`: the translator brief below, with every placeholder replaced. Keep it complete; do not shorten it.",
     `- \`labels\`: \`{"${LABEL_SESSION}": "${input.sessionId}", "${LABEL_ROLE}": "${ROLE_TRANSLATOR}", "${LABEL_UNIT}": "<unit>", "${LABEL_PRESET}": "${preset.id}"}\`.`,
     "- `notifyOnFinish`: `true`.",
@@ -230,6 +273,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     '- `workspaceId`: the Paseo workspace id above.',
     '- `title`: `Reviewer: <lens>` using the human lens name. Keep the `Reviewer:` prefix exactly; the plugin uses it to match the agent.',
     `- \`provider\`: \`${input.provider}\`.`,
+    ...(settingsLine ? [settingsLine] : []),
     "- `initialPrompt`: the QA brief below, with every placeholder replaced.",
     `- \`labels\`: \`{"${LABEL_SESSION}": "${input.sessionId}", "${LABEL_ROLE}": "${ROLE_REVIEWER}", "${LABEL_LENS}": "<lens id>", "${LABEL_PRESET}": "${preset.id}"}\`.`,
     "- `notifyOnFinish`: `true`.",

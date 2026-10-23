@@ -63,6 +63,8 @@ describe("SessionStore", () => {
       presetId: "code",
       provider: "codex",
       model: "gpt-5",
+      modeId: "full-access",
+      thinkingOptionId: "high",
       lenses: ["correctness", "security"],
       depth: "deep",
       outputDir: null,
@@ -75,6 +77,8 @@ describe("SessionStore", () => {
       presetId: "code",
       provider: "codex",
       model: "gpt-5",
+      modeId: "full-access",
+      thinkingOptionId: "high",
       lenses: ["correctness", "security"],
       depth: "deep",
       outputDir: null,
@@ -87,6 +91,8 @@ describe("SessionStore", () => {
       unknown
     >;
     delete legacy.presetId;
+    delete legacy.modeId;
+    delete legacy.thinkingOptionId;
 
     await mkdir(join(directory, "sessions"), { recursive: true });
     await writeFile(
@@ -112,8 +118,12 @@ describe("SessionStore", () => {
     expect(store.get("legacy")?.translation).toBeNull();
     expect(store.get("legacy")?.translators).toEqual([]);
     expect(store.get("legacy")?.workspaceDirectory).toBeNull();
+    expect(store.get("legacy")?.modeId).toBeNull();
+    expect(store.get("legacy")?.thinkingOptionId).toBeNull();
     expect(store.getDefaults()?.presetId).toBe("code");
     expect(store.getDefaults()?.lenses).toEqual(["correctness"]);
+    expect(store.getDefaults()?.modeId).toBeNull();
+    expect(store.getDefaults()?.thinkingOptionId).toBeNull();
     expect(store.getDefaults()?.outputDir).toBeNull();
   });
 

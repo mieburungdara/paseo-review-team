@@ -70,6 +70,47 @@ describe("buildLeadPrompt", () => {
     expect(prompt).not.toContain("Konsistensi Tokoh (`character`)");
   });
 
+  it("passes mode and thinking level to the lead and every child agent", () => {
+    const reviewPrompt = buildLeadPrompt({
+      ...BASE,
+      preset: CODE_PRESET,
+      lenses: ["correctness"],
+      modeId: "full-access",
+      modeLabel: "Full access",
+      thinkingOptionId: "high",
+      thinkingLabel: "High",
+    });
+
+    expect(reviewPrompt).toContain(
+      "- Mode for you and every child agent: Full access (`full-access`)",
+    );
+    expect(reviewPrompt).toContain(
+      "- Thinking level for you and every child agent: High (`high`)",
+    );
+    expect(reviewPrompt).toContain(
+      '`settings`: `{"modeId":"full-access","thinkingOptionId":"high"}`',
+    );
+    expect(reviewPrompt).toContain("do not change them per child");
+
+    const translationPrompt = buildLeadPrompt({
+      ...BASE,
+      target: "manuscript/en/ (bab 1–3)",
+      preset: TRANSLATE_PRESET,
+      lenses: ["fidelity"],
+      outputDir: "translated/id",
+      modeId: "full-access",
+      thinkingOptionId: "high",
+    });
+    expect(translationPrompt.match(/`settings`:/g)).toHaveLength(2);
+
+    const withoutSettings = buildLeadPrompt({
+      ...BASE,
+      preset: CODE_PRESET,
+      lenses: ["correctness"],
+    });
+    expect(withoutSettings).not.toContain("`settings`");
+  });
+
   it("builds a two-phase translation prompt with the translation protocol", () => {
     const prompt = buildLeadPrompt({
       ...BASE,

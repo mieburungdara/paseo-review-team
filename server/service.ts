@@ -29,6 +29,8 @@ import {
   errorMessage,
   listProviderOptions,
   readAgentTools,
+  resolveModeId,
+  resolveThinkingOptionId,
   sendToAgent,
 } from "./agents";
 import { reconcileSession } from "./observer";
@@ -71,10 +73,18 @@ function defaultsFor(
       ? (savedOutputDir ?? preset.translation?.defaultOutputDir ?? null)
       : null;
 
+  const savedModeId = saved && saved.provider === provider?.id ? saved.modeId : null;
+  const savedThinkingOptionId =
+    saved && saved.provider === provider?.id && saved.model === model?.id
+      ? saved.thinkingOptionId
+      : null;
+
   return {
     presetId: preset.id,
     provider: provider?.id ?? saved?.provider ?? null,
     model: model?.id ?? saved?.model ?? null,
+    modeId: resolveModeId(provider, savedModeId),
+    thinkingOptionId: resolveThinkingOptionId(model, savedThinkingOptionId),
     lenses: savedLenses.length > 0 ? savedLenses : [...preset.defaultLensIds],
     depth: saved?.depth ?? "standard",
     outputDir,
@@ -91,7 +101,17 @@ async function validateProvider(
   paseo: PaseoApi,
   providerId: string,
   modelId: string,
-): Promise<{ provider: ProviderOption; modelId: string; combined: string }> {
+  requestedModeId?: string | null,
+  requestedThinkingOptionId?: string | null,
+): Promise<{
+  provider: ProviderOption;
+  modelId: string;
+  modeId: string | null;
+  modeLabel: string | null;
+  thinkingOptionId: string | null;
+  thinkingLabel: string | null;
+  combined: string;
+}> {
   const providers = await listProviderOptions(paseo);
   const provider = providers.find((entry) => entry.id === providerId);
   if (!provider) {
@@ -103,7 +123,41 @@ async function validateProvider(
   if (!model) {
     throw new Error(`Model "${modelId}" tidak tersedia untuk provider "${providerId}".`);
   }
-  return { provider, modelId: model.id, combined: `${provider.id}/${model.id}` };
+
+  const requestedMode = requestedModeId?.trim() || null;
+  if (requestedMode && !provider.modes.some((mode) => mode.id === requestedMode)) {
+    throw new Error(
+      provider.modes.length === 0
+        ? `Provider "${providerId}" tidak mendukung pemilihan mode.`
+        : `Mode "${requestedMode}" tidak tersedia untuk provider "${providerId}". Muat ulang panel lalu pilih mode lagi.`,
+    );
+  }
+  const requestedThinking = requestedThinkingOptionId?.trim() || null;
+  if (
+    requestedThinking &&
+    !model.thinkingOptions.some((option) => option.id === requestedThinking)
+  ) {
+    throw new Error(
+      model.thinkingOptions.length === 0
+        ? `Model "${model.id}" tidak mendukung pemilihan thinking level.`
+        : `Thinking level "${requestedThinking}" tidak tersedia untuk model "${model.id}". Muat ulang panel lalu pilih ulang.`,
+    );
+  }
+
+  const modeId = resolveModeId(provider, requestedMode);
+  const thinkingOptionId = resolveThinkingOptionId(model, requestedThinking);
+  const mode = provider.modes.find((entry) => entry.id === modeId);
+  const thinking = model.thinkingOptions.find((entry) => entry.id === thinkingOptionId);
+
+  return {
+    provider,
+    modelId: model.id,
+    modeId,
+    modeLabel: mode?.label ?? null,
+    thinkingOptionId,
+    thinkingLabel: thinking?.label ?? null,
+    combined: `${provider.id}/${model.id}`,
+  };
 }
 
 export async function getState(
@@ -202,7 +256,14 @@ export async function startSession(
     );
   }
 
-  const { combined } = await validateProvider(paseo, input.providerId, input.modelId);
+  const { combined, modeId, modeLabel, thinkingOptionId, thinkingLabel } =
+    await validateProvider(
+      paseo,
+      input.providerId,
+      input.modelId,
+      input.modeId,
+      input.thinkingOptionId,
+    );
 
   const workspace = paseo.workspaces.ref(input.workspaceId);
   let snapshot = workspace.current();
@@ -266,8 +327,8 @@ export async function startSession(
     lenses,
     depth: input.depth,
     provider: combined,
-    modeId: input.modeId || null,
-    thinkingOptionId: input.thinkingOptionId || null,
+    modeId,
+    thinkingOptionId,
     status: "starting",
     phase: "starting",
     leadAgentId: null,
@@ -291,9 +352,6 @@ export async function startSession(
     pendingPermissions: [],
   };
 
-  const modeId = input.modeId || null;
-  const thinkingOptionId = input.thinkingOptionId || null;
-
   appendEvent(session, {
     kind: "session",
     message: isTranslation
@@ -312,6 +370,10 @@ export async function startSession(
       lenses,
       depth: input.depth,
       provider: combined,
+      modeId,
+      modeLabel,
+      thinkingOptionId,
+      thinkingLabel,
       preset,
       outputDir,
       outputDirAbsolute: outputDirAbsolute(session),
@@ -353,6 +415,8 @@ export async function startSession(
         presetId: preset.id,
         provider: input.providerId,
         model: input.modelId,
+        modeId,
+        thinkingOptionId,
         lenses,
         depth: input.depth,
         outputDir,

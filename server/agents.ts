@@ -1,6 +1,6 @@
 import type { PaseoAgent, PaseoAgentListResult, PaseoApi } from "@getpaseo/client";
 import { LABEL_SESSION } from "../shared/constants";
-import type { ProviderOption } from "../shared/contracts";
+import type { ProviderModel, ProviderOption } from "../shared/contracts";
 
 const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
 
@@ -28,23 +28,114 @@ export async function enableAgentTools(paseo: PaseoApi): Promise<boolean> {
   return readAgentTools(paseo);
 }
 
+interface ProviderSnapshotModeLike {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+interface ProviderSnapshotThinkingLike {
+  id: string;
+  label: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
+interface ProviderSnapshotModelLike {
+  id: string;
+  label: string;
+  isSelectable?: boolean;
+  isDefault?: boolean;
+  thinkingOptions?: ProviderSnapshotThinkingLike[];
+  defaultThinkingOptionId?: string;
+}
+
+export interface ProviderSnapshotEntryLike {
+  provider: string;
+  enabled?: boolean;
+  label?: string;
+  modes?: ProviderSnapshotModeLike[];
+  defaultModeId?: string | null;
+  models?: ProviderSnapshotModelLike[];
+}
+
+function defaultThinkingId(model: ProviderSnapshotModelLike): string | null {
+  const options = model.thinkingOptions ?? [];
+  const preferred = model.defaultThinkingOptionId;
+  if (preferred && options.some((option) => option.id === preferred)) return preferred;
+  return options.find((option) => option.isDefault)?.id ?? null;
+}
+
+export function providerOptionFromSnapshotEntry(
+  entry: ProviderSnapshotEntryLike,
+): ProviderOption | null {
+  const models: ProviderModel[] = (entry.models ?? [])
+    .filter((model) => model.isSelectable !== false)
+    .map((model) => ({
+      id: model.id,
+      label: model.label,
+      isDefault: model.isDefault === true,
+      thinkingOptions: (model.thinkingOptions ?? []).map((option) => ({
+        id: option.id,
+        label: option.label,
+        description: option.description ?? null,
+      })),
+      defaultThinkingOptionId: defaultThinkingId(model),
+    }));
+  if (models.length === 0) return null;
+
+  const modes = (entry.modes ?? []).map((mode) => ({
+    id: mode.id,
+    label: mode.label,
+    description: mode.description ?? null,
+  }));
+  const defaultModeId =
+    entry.defaultModeId && modes.some((mode) => mode.id === entry.defaultModeId)
+      ? entry.defaultModeId
+      : null;
+
+  return {
+    id: entry.provider,
+    label: entry.label?.trim() || entry.provider,
+    modes,
+    defaultModeId,
+    models,
+  };
+}
+
+export function resolveModeId(
+  provider: Pick<ProviderOption, "modes" | "defaultModeId"> | null | undefined,
+  requested?: string | null,
+): string | null {
+  if (!provider || provider.modes.length === 0) return null;
+  return (
+    provider.modes.find((mode) => mode.id === requested)?.id ??
+    provider.modes.find((mode) => mode.id === provider.defaultModeId)?.id ??
+    provider.modes[0].id
+  );
+}
+
+export function resolveThinkingOptionId(
+  model: Pick<ProviderModel, "thinkingOptions" | "defaultThinkingOptionId"> | null | undefined,
+  requested?: string | null,
+): string | null {
+  if (!model || model.thinkingOptions.length === 0) return null;
+  return (
+    model.thinkingOptions.find((option) => option.id === requested)?.id ??
+    model.thinkingOptions.find(
+      (option) => option.id === model.defaultThinkingOptionId,
+    )?.id ??
+    model.thinkingOptions[0].id
+  );
+}
+
 export async function listProviderOptions(paseo: PaseoApi): Promise<ProviderOption[]> {
   try {
     const snapshot = await paseo.providers.snapshot();
     const fromSnapshot = snapshot.entries
       .filter((entry) => entry.enabled !== false)
-      .map((entry) => ({
-        id: entry.provider,
-        label: entry.label ?? entry.provider,
-        models: (entry.models ?? [])
-          .filter((model) => model.isSelectable !== false)
-          .map((model) => ({
-            id: model.id,
-            label: model.label,
-            isDefault: model.isDefault === true,
-          })),
-      }))
-      .filter((entry) => entry.models.length > 0);
+      .map(providerOptionFromSnapshotEntry)
+      .filter((entry): entry is ProviderOption => entry !== null);
 
     if (fromSnapshot.length > 0) {
       return fromSnapshot.sort((left, right) => left.label.localeCompare(right.label));
@@ -59,17 +150,30 @@ export async function listProviderOptions(paseo: PaseoApi): Promise<ProviderOpti
       .filter((provider) => provider.available)
       .map(async (provider) => {
         try {
-          const result = await paseo.providers.listModels(provider.provider);
-          const models = (result.models ?? []).map((model) => ({
-            id: model.id,
-            label: model.label,
-            isDefault: model.isDefault === true,
-          }));
-          return {
-            id: provider.provider,
+          const [modelResult, modeResult] = await Promise.all([
+            paseo.providers.listModels(provider.provider),
+            paseo.providers.listModes(provider.provider).catch((error) => {
+              console.warn(
+                `[review-team] could not list modes for ${provider.provider}:`,
+                error,
+              );
+              return null;
+            }),
+          ]);
+          return providerOptionFromSnapshotEntry({
+            provider: provider.provider,
             label: provider.provider,
-            models,
-          };
+            models: (modelResult.models ?? []).map((model) => ({
+              id: model.id,
+              label: model.label,
+              isSelectable: model.isSelectable,
+              isDefault: model.isDefault,
+              thinkingOptions: model.thinkingOptions,
+              defaultThinkingOptionId: model.defaultThinkingOptionId,
+            })),
+            modes: modeResult?.modes,
+            defaultModeId: null,
+          });
         } catch (error) {
           console.warn(`[review-team] could not list models for ${provider.provider}:`, error);
           return null;
@@ -78,7 +182,7 @@ export async function listProviderOptions(paseo: PaseoApi): Promise<ProviderOpti
   );
 
   return entries
-    .filter((entry): entry is ProviderOption => entry !== null && entry.models.length > 0)
+    .filter((entry): entry is ProviderOption => entry !== null)
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 

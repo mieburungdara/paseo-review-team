@@ -16,9 +16,9 @@ Plugin menyertakan preset **Code Review**, **Review Novel**, dan **Terjemahan No
 
 ## Cara kerja review
 
-1. Operator memilih preset review, target, lensa, kedalaman, dan model.
-2. Plugin membuat satu agen lead dengan instruksi konsolidasi, label sesi, dan prompt sesuai preset.
-3. Lead membuat reviewer lewat alat agen native Paseo (`create_agent`), satu reviewer per lensa.
+1. Operator memilih preset review, target, lensa, kedalaman, provider, model, serta mode dan thinking level bila tersedia. Pilihan ini berlaku untuk lead dan semua reviewer.
+2. Plugin membuat satu agen lead dengan instruksi konsolidasi, label sesi, prompt sesuai preset, dan mode/thinking pilihan operator.
+3. Lead membuat reviewer lewat alat agen native Paseo (`create_agent`), satu reviewer per lensa, dengan `settings` yang sama.
 4. Reviewer bekerja paralel dan melapor hanya kepada lead; lead menjadi hub yang meneruskan konteks antarlensa.
 5. Plugin mengamati lifecycle agen, mem-parse laporan dari timeline, dan menghitung coverage dari reviewer yang benar-benar berjalan.
 6. Setelah semua lensa memberi hasil, plugin mengingatkan lead untuk berkonsolidasi, lalu menampilkan laporan akhir.
@@ -45,7 +45,7 @@ Plugin ── membuat ──► Lead (fase translating)
                      Lead konsolidasi → laporan akhir
 ```
 
-1. Operator memilih preset terjemahan, sumber/rentang, folder hasil relatif, lensa QA, kedalaman, dan model.
+1. Operator memilih preset terjemahan, sumber/rentang, folder hasil relatif, lensa QA, kedalaman, provider, model, serta mode dan thinking level bila tersedia. Pilihan ini berlaku untuk lead, penerjemah, dan QA.
 2. Plugin memvalidasi folder hasil (relatif, di dalam workspace, bukan root/`.git`, aman dari `..`/symlink) sebelum membuat lead. Plugin tidak membuat folder.
 3. Lead membuat satu penerjemah per unit pada batch saat ini. Setiap penerjemah menulis hanya file hasil yang ditugaskan.
 4. Penerjemah menutup giliran dengan `TRANSLATION_REPORT` dan `translation-output` berisi path sumber/hasil relatif workspace.
@@ -75,7 +75,7 @@ Panel menampilkan status lead, progres unit (`selesai/ditemukan`), kartu penerje
 
 - Paseo >= 0.12.0.
 - Agent tools diaktifkan (`mcp.injectIntoAgents`). Panel menyediakan consent gate; plugin tidak mengaktifkannya otomatis.
-- Provider/model dengan dukungan tool use; penerjemah membutuhkan kemampuan menulis file.
+- Provider/model dengan dukungan tool use; mode dan thinking level opsional tergantung apa yang diekspos provider. Penerjemah membutuhkan kemampuan menulis file.
 
 ## Keamanan
 
