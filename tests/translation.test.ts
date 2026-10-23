@@ -196,6 +196,7 @@ describe("outputDirAbsolute", () => {
         sourceLanguage: "English",
         targetLanguage: "Indonesian",
         outputDir: "translated/id",
+        outputExtension: ".txt",
         unitLabel: "Bab",
       },
     };

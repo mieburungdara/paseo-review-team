@@ -1,6 +1,7 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 import { PRESET_ID_PATTERN, PresetClientConfigSchema } from "./presets";
+import { OUTPUT_EXTENSION_PATTERN } from "./translation";
 
 export const FindingSchema = z.object({
   severity: z.enum(["high", "medium", "low"]),
@@ -106,6 +107,7 @@ export const ReviewSessionSchema = z.object({
       sourceLanguage: z.string(),
       targetLanguage: z.string(),
       outputDir: z.string(),
+      outputExtension: z.string().regex(OUTPUT_EXTENSION_PATTERN).default(".md"),
       unitLabel: z.string(),
     })
     .nullable()
@@ -184,6 +186,7 @@ export const SetupDefaultsSchema = z.object({
   lenses: z.array(z.string()),
   depth: z.enum(["quick", "standard", "deep"]),
   outputDir: z.string().max(300).nullable().default(null),
+  outputExtension: z.string().nullable().default(null),
 });
 
 export type ProviderMode = z.infer<typeof ProviderModeSchema>;
@@ -226,6 +229,7 @@ export const sessionStartRpc = defineRpc({
     modeId: z.string().max(200).nullable().optional(),
     thinkingOptionId: z.string().max(200).nullable().optional(),
     outputDir: z.string().trim().min(1).max(300).optional(),
+    outputExtension: z.string().trim().regex(OUTPUT_EXTENSION_PATTERN).nullable().optional(),
   }),
   output: z.object({ session: ReviewSessionSchema }),
 });

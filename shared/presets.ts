@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_LENS_IDS, DEPTHS, LENSES, MAX_OUTPUT_DIR_LENGTH } from "./constants";
-import { isSafeRelativePath, normalizeRelativePath } from "./translation";
+import { isSafeRelativePath, normalizeRelativePath, OUTPUT_EXTENSION_PATTERN } from "./translation";
 
 export const PRESET_ID_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 export const DEFAULT_PRESET_ID = "code";
@@ -136,7 +136,10 @@ export const PresetTranslationConfigSchema = z.object({
     .max(MAX_OUTPUT_DIR_LENGTH)
     .transform(normalizeRelativePath),
   unitLabel: shortText,
-  outputExtension: z.string().trim().regex(/^\.[a-z0-9]{1,10}$/i, "Ekstensi harus seperti \".md\"."),
+  outputExtension: z
+    .string()
+    .trim()
+    .regex(OUTPUT_EXTENSION_PATTERN, "Ekstensi harus seperti \".txt\" atau \".md\"."),
   maxUnitsPerSession: z.number().int().min(1).max(50).default(20),
   maxConcurrentTranslators: z.number().int().min(1).max(8).default(5),
 });
@@ -539,7 +542,7 @@ export const TRANSLATE_PRESET: PresetDefinition = {
     targetLanguage: "Indonesian",
     defaultOutputDir: "translated/id",
     unitLabel: "Bab",
-    outputExtension: ".md",
+    outputExtension: ".txt",
     maxUnitsPerSession: 20,
     maxConcurrentTranslators: 5,
   },

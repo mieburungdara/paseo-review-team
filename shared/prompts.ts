@@ -22,6 +22,7 @@ import {
   type PresetDefinition,
   type PresetTask,
 } from "./presets";
+import { normalizeOutputExtension } from "./translation";
 
 export interface LeadPromptInput {
   sessionId: string;
@@ -37,6 +38,7 @@ export interface LeadPromptInput {
   preset: PresetDefinition;
   outputDir?: string | null;
   outputDirAbsolute?: string | null;
+  outputExtension?: string | null;
 }
 
 function bullets(lines: string[]): string[] {
@@ -188,6 +190,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
   const translatorPlural = translatorPluralFor(preset);
   const outputDir = input.outputDir?.trim() || config.defaultOutputDir;
   const outputDirAbsolute = input.outputDirAbsolute?.trim() || "tidak tersedia";
+  const outputExtension = normalizeOutputExtension(input.outputExtension) ?? config.outputExtension;
   const location = preset.prompt.locationExample;
   const languages = `${config.sourceLanguage} → ${config.targetLanguage}`;
   const lensLines = input.lenses.map(
@@ -209,6 +212,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     `- Source range: ${input.target}`,
     `- Output folder (workspace-relative): \`${outputDir}\``,
     `- Output folder on disk: \`${outputDirAbsolute}\``,
+    `- Output file format: \`${outputExtension}\``,
     `- Paseo workspace id: ${input.workspaceId}`,
     `- Depth: ${depth.label} (\`${input.depth}\`). ${depth.guidance}`,
     `- QA lenses: ${lensList}`,
@@ -241,7 +245,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     "",
     `Unit: {{UNIT}} (for example ${config.unitLabel} 1)`,
     "Source: {{SOURCE_PATH}} (workspace-relative)",
-    `Output: {{OUTPUT_PATH}} inside \`${outputDir}\` (workspace-relative, ending in \`${config.outputExtension}\`)`,
+    `Output: {{OUTPUT_PATH}} inside \`${outputDir}\` (workspace-relative, ending in \`${outputExtension}\`)`,
     `Languages: ${languages}`,
     "Glossary / terminology: {{GLOSSARY_OR_NONE}}",
     "Depth: {{DEPTH}}. {{DEPTH_GUIDANCE}}",
@@ -260,7 +264,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     "- When the unit is translated and the output file is written, output this block exactly once, after your prose:",
     "TRANSLATION_REPORT: DONE|BLOCKED|FAILED",
     "```" + TRANSLATION_FENCE,
-    `{"unit":"${config.unitLabel} 1","source":"manuscript/en/bab-01.md","output":"${outputDir}/bab-01${config.outputExtension}","summary":"...","notes":["..."]}`,
+    `{"unit":"${config.unitLabel} 1","source":"manuscript/en/bab-01.md","output":"${outputDir}/bab-01${outputExtension}","summary":"...","notes":["..."]}`,
     "```",
     "- `source` and `output` must be workspace-relative paths, never absolute. Both must point at regular files.",
     "- The JSON must be valid. `notes` is optional. Write the summary and notes in " + reportLanguage + "; keep the JSON keys and marker values exactly as shown.",
@@ -285,6 +289,7 @@ function buildTranslationLeadPrompt(input: LeadPromptInput): string {
     "Lens: {{LENS_LABEL}} ({{LENS_ID}}). Focus: {{LENS_HINT}}",
     `Source range: ${input.target}`,
     `Translated output folder: \`${outputDir}\` (workspace-relative)`,
+    `Output file format: \`${outputExtension}\``,
     "Depth: {{DEPTH}}. {{DEPTH_GUIDANCE}}",
     "",
     "Rules:",

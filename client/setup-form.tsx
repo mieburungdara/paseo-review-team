@@ -13,7 +13,12 @@ import {
   translatorPluralFor,
   type PresetDepthId,
 } from "../shared/presets";
-import { isSafeRelativePath, normalizeRelativePath } from "../shared/translation";
+import {
+  OUTPUT_EXTENSION_OPTIONS,
+  isSafeRelativePath,
+  normalizeOutputExtension,
+  normalizeRelativePath,
+} from "../shared/translation";
 import { BodyText, Button, Card, Chip, Muted, SectionTitle } from "./components";
 
 function messageOf(error: unknown): string {
@@ -56,6 +61,7 @@ export function SetupForm({
   const [modelId, setModelId] = useState<string | null>(null);
   const [modeId, setModeId] = useState<string | null>(null);
   const [thinkingOptionId, setThinkingOptionId] = useState<string | null>(null);
+  const [outputExtension, setOutputExtension] = useState<string | null>(null);
   const [lenses, setLenses] = useState<string[] | null>(null);
   const [depth, setDepth] = useState<PresetDepthId | null>(null);
   const [busy, setBusy] = useState(false);
@@ -110,6 +116,17 @@ export function SetupForm({
       : undefined) ??
     savedThinking ??
     defaultThinking;
+
+  const presetExtension =
+    normalizeOutputExtension(preset.translation?.outputExtension) ?? ".txt";
+  const savedExtension = presetIsDefault
+    ? normalizeOutputExtension(state.defaults.outputExtension)
+    : null;
+  const selectedExtension =
+    normalizeOutputExtension(outputExtension) ?? savedExtension ?? presetExtension;
+  const extensionOptions = Array.from(
+    new Set([...OUTPUT_EXTENSION_OPTIONS, presetExtension]),
+  );
 
   const selectedLenses = useMemo(() => {
     const raw = lenses ?? (presetIsDefault ? state.defaults.lenses : preset.defaultLensIds);
@@ -173,6 +190,7 @@ export function SetupForm({
     setPresetId(nextId);
     setLenses(null);
     setDepth(null);
+    setOutputExtension(null);
     setError(null);
     if (next?.task === "translate") {
       const saved = next.id === state.defaults.presetId ? state.defaults.outputDir : null;
@@ -220,7 +238,12 @@ export function SetupForm({
         modelId: chosenModel.id,
         modeId: chosenMode?.id ?? null,
         thinkingOptionId: chosenThinking?.id ?? null,
-        ...(isTranslation ? { outputDir: trimmedOutputDir } : {}),
+        ...(isTranslation
+          ? {
+              outputDir: trimmedOutputDir,
+              outputExtension: selectedExtension,
+            }
+          : {}),
       });
       onStarted(result.session);
     } catch (cause) {
@@ -309,8 +332,7 @@ export function SetupForm({
           <SectionTitle theme={theme}>Folder hasil</SectionTitle>
           <Muted theme={theme}>
             Path relatif terhadap root workspace. {translatorLabelFor(preset)} menulis berkas{" "}
-            {preset.translation.outputExtension} di folder ini. Plugin tidak membuat folder atau
-            menulis berkas.
+            {selectedExtension} di folder ini. Plugin tidak membuat folder atau menulis berkas.
           </Muted>
           <TextInput
             accessibilityLabel="Folder hasil terjemahan"
@@ -322,6 +344,27 @@ export function SetupForm({
             style={styles.singleInput}
             value={outputDir}
           />
+          <View style={styles.column}>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontWeight: "700" }}>
+              FORMAT BERKAS
+            </Text>
+            <View style={styles.row}>
+              {extensionOptions.map((extension) => (
+                <Chip
+                  key={extension}
+                  disabled={busy}
+                  label={extension}
+                  onPress={() => setOutputExtension(extension)}
+                  selected={selectedExtension === extension}
+                  theme={theme}
+                />
+              ))}
+            </View>
+            <Muted theme={theme}>
+              Format diterapkan ke semua penerjemah dan peninjau QA pada sesi ini. Default mengikuti
+              preset; pilihan terakhir disimpan untuk sesi berikutnya.
+            </Muted>
+          </View>
           {workspace?.directory ? (
             trimmedOutputDir.length > 0 && outputDirSafe ? (
               <Text selectable style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>

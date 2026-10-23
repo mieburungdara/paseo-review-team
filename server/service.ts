@@ -22,7 +22,11 @@ import {
   buildReportRequestMessage,
   buildStopMessage,
 } from "../shared/prompts";
-import { isSafeRelativePath, normalizeRelativePath } from "../shared/translation";
+import {
+  isSafeRelativePath,
+  normalizeOutputExtension,
+  normalizeRelativePath,
+} from "../shared/translation";
 import {
   archiveAgent,
   enableAgentTools,
@@ -72,6 +76,14 @@ function defaultsFor(
     preset.task === "translate"
       ? (savedOutputDir ?? preset.translation?.defaultOutputDir ?? null)
       : null;
+  const savedOutputExtension =
+    saved && saved.presetId === preset.id
+      ? normalizeOutputExtension(saved.outputExtension)
+      : null;
+  const outputExtension =
+    preset.task === "translate"
+      ? (savedOutputExtension ?? preset.translation?.outputExtension ?? ".txt")
+      : null;
 
   const savedModeId = saved && saved.provider === provider?.id ? saved.modeId : null;
   const savedThinkingOptionId =
@@ -88,6 +100,7 @@ function defaultsFor(
     lenses: savedLenses.length > 0 ? savedLenses : [...preset.defaultLensIds],
     depth: saved?.depth ?? "standard",
     outputDir,
+    outputExtension,
   };
 }
 
@@ -218,6 +231,7 @@ export async function startSession(
     modeId?: string | null;
     thinkingOptionId?: string | null;
     outputDir?: string;
+    outputExtension?: string | null;
   },
   { paseo }: PluginHandlerContext,
 ) {
@@ -287,6 +301,7 @@ export async function startSession(
   const isTranslation = preset.task === "translate";
   const translationConfig = isTranslation ? translationConfigFor(preset) : null;
   let outputDir: string | null = null;
+  let outputExtension: string | null = null;
   let workspaceDirectory: string | null = null;
 
   if (isTranslation && translationConfig) {
@@ -300,11 +315,21 @@ export async function startSession(
         "Workspace ini tidak punya folder lokal di daemon. Buka workspace dari checkout lokal agar penerjemah bisa menulis hasil.",
       );
     }
+    const requestedExtension = input.outputExtension?.trim();
+    if (requestedExtension && !normalizeOutputExtension(requestedExtension)) {
+      throw new Error('Format hasil harus ekstensi berkas yang aman, misalnya ".txt" atau ".md".');
+    }
     const validated = await validateOutputDir(directory, requested);
     outputDir = validated.relative;
+    outputExtension =
+      normalizeOutputExtension(requestedExtension) ??
+      normalizeOutputExtension(translationConfig.outputExtension) ??
+      ".txt";
     workspaceDirectory = validated.workspace;
   } else if (input.outputDir?.trim()) {
     throw new Error("Folder hasil hanya dipakai preset terjemahan. Pilih preset Terjemahan Novel.");
+  } else if (input.outputExtension) {
+    throw new Error("Format hasil hanya dipakai preset terjemahan. Pilih preset Terjemahan Novel.");
   }
 
   const session: ReviewSession = {
@@ -312,11 +337,12 @@ export async function startSession(
     presetId: preset.id,
     task: preset.task,
     translation:
-      isTranslation && translationConfig && outputDir
+      isTranslation && translationConfig && outputDir && outputExtension
         ? {
             sourceLanguage: translationConfig.sourceLanguage,
             targetLanguage: translationConfig.targetLanguage,
             outputDir,
+            outputExtension,
             unitLabel: translationConfig.unitLabel,
           }
         : null,
@@ -355,7 +381,7 @@ export async function startSession(
   appendEvent(session, {
     kind: "session",
     message: isTranslation
-      ? `Sesi ${preset.label} dimulai untuk ${workspaceName}: ${lenses.length} lensa QA, folder hasil ${outputDir}.`
+      ? `Sesi ${preset.label} dimulai untuk ${workspaceName}: ${lenses.length} lensa QA, folder hasil ${outputDir} (${outputExtension}).`
       : `Sesi ${preset.label} dimulai untuk ${workspaceName} dengan ${lenses.length} lensa.`,
     agentId: null,
     lens: null,
@@ -376,6 +402,7 @@ export async function startSession(
       thinkingLabel,
       preset,
       outputDir,
+      outputExtension,
       outputDirAbsolute: outputDirAbsolute(session),
     });
 
@@ -420,6 +447,7 @@ export async function startSession(
         lenses,
         depth: input.depth,
         outputDir,
+        outputExtension,
       })
       .catch((error) => {
         console.warn("[review-team] could not save setup defaults:", errorMessage(error));

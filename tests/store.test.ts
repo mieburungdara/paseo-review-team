@@ -68,6 +68,7 @@ describe("SessionStore", () => {
       lenses: ["correctness", "security"],
       depth: "deep",
       outputDir: null,
+      outputExtension: null,
     });
 
     const reopened = new SessionStore(directory);
@@ -82,6 +83,7 @@ describe("SessionStore", () => {
       lenses: ["correctness", "security"],
       depth: "deep",
       outputDir: null,
+      outputExtension: null,
     });
   });
 
@@ -125,6 +127,7 @@ describe("SessionStore", () => {
     expect(store.getDefaults()?.modeId).toBeNull();
     expect(store.getDefaults()?.thinkingOptionId).toBeNull();
     expect(store.getDefaults()?.outputDir).toBeNull();
+    expect(store.getDefaults()?.outputExtension).toBeNull();
   });
 
   it("round-trips a translation session with translator progress", async () => {
@@ -137,6 +140,7 @@ describe("SessionStore", () => {
         sourceLanguage: "English",
         targetLanguage: "Indonesian",
         outputDir: "translated/id",
+        outputExtension: ".txt",
         unitLabel: "Bab",
       },
       workspaceDirectory: "C:/workspace",
@@ -166,6 +170,7 @@ describe("SessionStore", () => {
     const loaded = reopened.get("translate-session");
     expect(loaded?.task).toBe("translate");
     expect(loaded?.translation?.outputDir).toBe("translated/id");
+    expect(loaded?.translation?.outputExtension).toBe(".txt");
     expect(loaded?.workspaceDirectory).toBe("C:/workspace");
     expect(loaded?.translators[0].unit).toBe("Bab 1");
     expect(loaded?.translators[0].outputStatus).toBe("present");

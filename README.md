@@ -14,7 +14,7 @@ Plugin ini mengikuti model koordinasi native Paseo: lead membuat agen anak denga
 - **Dua mode** — review read-only dan terjemahan naskah yang menulis hasil ke folder workspace. Mode ditentukan preset; protokol laporan review tetap sama.
 - **Preset bawaan & custom** — Code Review, Review Novel, dan Terjemahan Novel; ganti preset di form setup untuk mengganti lensa, kedalaman, copy UI, dan gaya laporan. Preset custom dibaca dari `presets.json`.
 - **Lead + reviewer paralel** — satu reviewer per lensa yang dipilih. Preset Code Review memakai correctness, security, tests, architecture, dan performance; preset Review Novel memakai alur, tokoh, dunia, gaya, dan pacing.
-- **Penerjemah per bab + QA** — preset terjemahan membuat satu penerjemah per unit (maks. 20 unit dan 5 penerjemah paralel per sesi), memverifikasi path hasil, lalu menjalankan lensa QA read-only setelah semua unit terminal.
+- **Penerjemah per bab + QA** — preset terjemahan membuat satu penerjemah per unit (maks. 20 unit dan 5 penerjemah paralel per sesi), memilih format hasil `.txt`/`.md`, memverifikasi path hasil, lalu menjalankan lensa QA read-only setelah semua unit terminal.
 - **Coverage dari agen nyata** — dihitung dari reviewer yang benar-benar ditemukan lewat label sesi dan `paseo.parent-agent-id`, bukan dari klaim lead.
 - **Laporan terstruktur** — JSON `review-findings` per reviewer dan `review-final` dari lead; parser toleran dengan fallback teks mentah.
 - **Visibilitas izin** — permintaan izin yang menunggu terlihat di panel; plugin **tidak pernah** menyetujui izin otomatis.
@@ -53,8 +53,8 @@ Muat ulang plugin dari **Settings → Plugins** jika daemon belum mendeteksinya.
 2. Buka tab **Review Team** di panel workspace, atau jalankan **Buka Review Team** dari Command Center.
 3. Pilih preset: **Code Review**, **Review Novel**, **Terjemahan Novel**, atau preset custom yang terdeteksi. Label target, daftar lensa, dan pilihan kedalaman mengikuti preset.
 4. Isi target. Untuk kode, misalnya `diff vs main`, `src/auth/login`, atau `PR #42`; untuk novel, misalnya `manuscript/bab-03.md` atau `bab 3–5`; untuk terjemahan, sumber dan rentangnya, misalnya `manuscript/en/bab-01.md` atau `manuscript/en/ (bab 1–20)`.
-5. Untuk preset terjemahan, isi juga **Folder hasil** relatif terhadap workspace, misalnya `translated/id`. Folder ini tidak dibuat oleh plugin.
-6. Pilih lensa, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level**; keduanya diterapkan ke lead dan semua agen anak, lalu disimpan sebagai default setup. Mengganti preset mengembalikan lensa, kedalaman, dan folder hasil ke default preset tersebut.
+5. Untuk preset terjemahan, isi juga **Folder hasil** relatif terhadap workspace, misalnya `translated/id`, dan pilih **Format berkas** `.txt` atau `.md`. Format default-nya `.txt`; pilihan terakhir disimpan untuk sesi berikutnya. Folder ini tidak dibuat oleh plugin.
+6. Pilih lensa, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level**; keduanya diterapkan ke lead dan semua agen anak, lalu disimpan sebagai default setup. Mengganti preset mengembalikan lensa, kedalaman, folder hasil, dan format berkas ke default preset tersebut.
 7. Jika agent tools belum aktif, tinjau penjelasannya lalu aktifkan lewat tombol consent.
 8. Mulai sesi. Untuk review, lead membuat satu reviewer per lensa. Untuk terjemahan, lead membuat penerjemah per bab, lalu peninjau QA setelah semua unit terminal.
 9. Pantau coverage/progres, status lead, kartu reviewer/translator, dan event. Pesan lead bila perlu mengarahkan ulang.
@@ -123,12 +123,13 @@ Sumber dan hasil sama-sama berada di **workspace**. Plugin tidak mengakses datab
 2. Pilih preset **Terjemahan Novel**.
 3. Isi **Sumber & rentang bab**, misalnya `manuscript/en/ (bab 1–20)`. Batasi sesi pada satu arc atau volume; default-nya maksimal 20 unit dan 5 penerjemah paralel per sesi.
 4. Isi **Folder hasil** relatif terhadap workspace, misalnya `translated/id`. Folder wajib berada di dalam workspace, bukan root workspace, bukan `.git`, dan tidak boleh keluar lewat `..` atau symlink. Plugin **tidak membuat folder**; buat folder bila perlu atau biarkan penerjemah membuatnya sesuai izin agen.
-5. Pilih lensa QA, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level** untuk lead, penerjemah, dan peninjau QA. Penerjemah membutuhkan model dan izin yang dapat menulis file; peninjau QA cukup read-only.
-6. Mulai sesi. Lead membuat penerjemah per bab dan meneruskan path sumber, path hasil, bahasa, gaya, glosarium, serta protokol laporan.
-7. Pantau progres unit di panel. Penghitung memakai `selesai/ditemukan` karena total unit baru diketahui dari agen yang benar-benar dibuat; plugin tidak menebak jumlah bab.
-8. Setelah semua unit terminal, lead membuat peninjau QA. QA membandingkan sumber dan hasil per lensa dan melapor hanya kepada lead.
-9. Baca **Catatan QA** dan laporan akhir di panel, lalu buka file hasil dari **file explorer workspace Paseo**. Panel tidak menyediakan preview file.
-10. Hentikan sesi kapan saja; opsional arsipkan lead, penerjemah, dan QA. File hasil tidak dihapus.
+5. Pilih **Format berkas** untuk hasil terjemahan: `.txt` (default) atau `.md`. Format berlaku untuk semua penerjemah dan peninjau QA di sesi ini, dan pilihan terakhir disimpan sebagai default setup. Nama berkas mengikuti ekstensi tersebut, misalnya `bab-01.txt`.
+6. Pilih lensa QA, kedalaman, provider, dan model. Bila tersedia, pilih juga **Mode** dan **Thinking level** untuk lead, penerjemah, dan peninjau QA. Penerjemah membutuhkan model dan izin yang dapat menulis file; peninjau QA cukup read-only.
+7. Mulai sesi. Lead membuat penerjemah per bab dan meneruskan path sumber, path hasil, format berkas, bahasa, gaya, glosarium, serta protokol laporan.
+8. Pantau progres unit di panel. Penghitung memakai `selesai/ditemukan` karena total unit baru diketahui dari agen yang benar-benar dibuat; plugin tidak menebak jumlah bab.
+9. Setelah semua unit terminal, lead membuat peninjau QA. QA membandingkan sumber dan hasil per lensa dan melapor hanya kepada lead.
+10. Baca **Catatan QA** dan laporan akhir di panel, lalu buka file hasil dari **file explorer workspace Paseo**. Panel tidak menyediakan preview file.
+11. Hentikan sesi kapan saja; opsional arsipkan lead, penerjemah, dan QA. File hasil tidak dihapus.
 
 Untuk novel panjang (misalnya 872 bab), jalankan beberapa sesi per arc/volume. Ini disengaja: batas unit dan konkuransi menjaga sesi tetap dapat diamati dan dipulihkan, bukan pipeline bulk sekali jalan.
 
@@ -283,12 +284,12 @@ Ubah file, lalu muat ulang plugin atau buka ulang panel. Peringatan validasi mun
 
 ## Format laporan
 
-Penerjemah menutup giliran dengan status dan path hasil yang relatif terhadap root workspace:
+Penerjemah menutup giliran dengan status dan path hasil yang relatif terhadap root workspace. Ekstensi path mengikuti format yang dipilih di setup (`.txt` default atau `.md`):
 
 ````text
 TRANSLATION_REPORT: DONE|BLOCKED|FAILED
 ```translation-output
-{"unit":"Bab 1","source":"manuscript/en/bab-01.md","output":"translated/id/bab-01.md","summary":"...","notes":[]}
+{"unit":"Bab 1","source":"manuscript/en/bab-01.md","output":"translated/id/bab-01.txt","summary":"...","notes":[]}
 ```
 ````
 

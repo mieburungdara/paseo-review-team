@@ -337,7 +337,8 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 {session.task === "translate" && session.translation ? (
                   <Muted theme={theme}>
                     {session.translation.sourceLanguage} → {session.translation.targetLanguage} ·{" "}
-                    Folder hasil: {session.translation.outputDir}
+                    Folder hasil: {session.translation.outputDir} · format{" "}
+                    {session.translation.outputExtension}
                   </Muted>
                 ) : null}
                 <Muted theme={theme}>
@@ -562,8 +563,9 @@ export function ReviewTeamPanel(props: PluginWorkspacePanelProps) {
                 </View>
               )}
               <Muted selectable theme={theme}>
-                Folder hasil: {session.translation?.outputDir ?? "belum diset"}. Buka berkas dari
-                file explorer workspace; plugin tidak membuka atau menulis berkas.
+                Folder hasil: {session.translation?.outputDir ?? "belum diset"} · format{" "}
+                {session.translation?.outputExtension ?? ".txt"}. Buka berkas dari file explorer
+                workspace; plugin tidak membuka atau menulis berkas.
               </Muted>
             </Card>
           ) : null}
@@ -776,6 +778,7 @@ function PastSessionCard({
       {session.task === "translate" ? (
         <Muted theme={theme}>
           Folder hasil: {session.translation?.outputDir ?? "belum diset"} ·{" "}
+          {session.translation?.outputExtension ?? ".txt"} ·{" "}
           {translationProgress(session.translators).done}/
           {translationProgress(session.translators).total} unit selesai
         </Muted>

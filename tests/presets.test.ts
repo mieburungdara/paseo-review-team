@@ -68,6 +68,7 @@ describe("built-in presets", () => {
     expect(TRANSLATE_PRESET.translation?.sourceLanguage).toBe("English");
     expect(TRANSLATE_PRESET.translation?.targetLanguage).toBe("Indonesian");
     expect(TRANSLATE_PRESET.translation?.defaultOutputDir).toBe("translated/id");
+    expect(TRANSLATE_PRESET.translation?.outputExtension).toBe(".txt");
     expect(translationConfigFor(TRANSLATE_PRESET).unitLabel).toBe("Bab");
     expect(translatorLabelFor(TRANSLATE_PRESET)).toBe("Penerjemah");
     expect(translatorPluralFor(TRANSLATE_PRESET)).toBe("para penerjemah");
@@ -142,6 +143,15 @@ describe("custom preset validation", () => {
     const broken = {
       ...base,
       translation: { ...base.translation!, defaultOutputDir: "../outside" },
+    };
+    expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it("rejects an unsafe translation output extension", () => {
+    const base = customTranslateOf();
+    const broken = {
+      ...base,
+      translation: { ...base.translation!, outputExtension: "txt" },
     };
     expect(CustomPresetSchema.safeParse(broken).success).toBe(false);
   });

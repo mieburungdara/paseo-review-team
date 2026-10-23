@@ -126,6 +126,9 @@ describe("buildLeadPrompt", () => {
     expect(prompt).toContain("Source range: manuscript/en/ (bab 1–20)");
     expect(prompt).toContain("Output folder (workspace-relative): `translated/id`");
     expect(prompt).toContain("Output folder on disk: `C:/workspace/translated/id`");
+    expect(prompt).toContain("Output file format: `.txt`");
+    expect(prompt).toContain('"output":"translated/id/bab-01.txt"');
+    expect(prompt).toContain("ending in `.txt`");
     expect(prompt).toContain("Phase 1 — create translators");
     expect(prompt).toContain("Phase 2 — create QA reviewers");
     expect(prompt).toContain("review-team.role");
@@ -141,6 +144,30 @@ describe("buildLeadPrompt", () => {
     expect(prompt).toContain("review-final");
     expect(prompt).toContain("review-findings");
     expect(prompt).toContain("at most 20 bab");
+  });
+
+  it("lets a session override the translation output format", () => {
+    const markdown = buildLeadPrompt({
+      ...BASE,
+      target: "manuscript/en (bab 1)",
+      preset: TRANSLATE_PRESET,
+      lenses: ["fidelity"],
+      outputDir: "translated/id",
+      outputExtension: ".md",
+    });
+    expect(markdown).toContain("Output file format: `.md`");
+    expect(markdown).toContain('"output":"translated/id/bab-01.md"');
+    expect(markdown).not.toContain("bab-01.txt");
+
+    const invalid = buildLeadPrompt({
+      ...BASE,
+      target: "manuscript/en (bab 1)",
+      preset: TRANSLATE_PRESET,
+      lenses: ["fidelity"],
+      outputDir: "translated/id",
+      outputExtension: "exe",
+    });
+    expect(invalid).toContain("Output file format: `.txt`");
   });
 
   it("makes follow-up messages task-aware", () => {

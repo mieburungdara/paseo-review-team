@@ -31,7 +31,7 @@ Operator: sumber + rentang bab + folder hasil
    ▼
 Plugin ── membuat ──► Lead (fase translating)
                         │ create_agent (maks. 5 penerjemah aktif)
-                        ├──► Penerjemah: Bab 1 ── tulis translated/id/bab-01.md
+                        ├──► Penerjemah: Bab 1 ── tulis translated/id/bab-01.txt
                         ├──► Penerjemah: Bab 2
                         └──► Penerjemah: Bab N
                         │
@@ -45,7 +45,7 @@ Plugin ── membuat ──► Lead (fase translating)
                      Lead konsolidasi → laporan akhir
 ```
 
-1. Operator memilih preset terjemahan, sumber/rentang, folder hasil relatif, lensa QA, kedalaman, provider, model, serta mode dan thinking level bila tersedia. Pilihan ini berlaku untuk lead, penerjemah, dan QA.
+1. Operator memilih preset terjemahan, sumber/rentang, folder hasil relatif, format berkas (`.txt` default atau `.md`), lensa QA, kedalaman, provider, model, serta mode dan thinking level bila tersedia. Pilihan ini berlaku untuk lead, penerjemah, dan QA.
 2. Plugin memvalidasi folder hasil (relatif, di dalam workspace, bukan root/`.git`, aman dari `..`/symlink) sebelum membuat lead. Plugin tidak membuat folder.
 3. Lead membuat satu penerjemah per unit pada batch saat ini. Setiap penerjemah menulis hanya file hasil yang ditugaskan.
 4. Penerjemah menutup giliran dengan `TRANSLATION_REPORT` dan `translation-output` berisi path sumber/hasil relatif workspace.
@@ -59,7 +59,7 @@ Panel menampilkan status lead, progres unit (`selesai/ditemukan`), kartu penerje
 
 - `code` (bawaan) mempertahankan perilaku lama dan dipakai untuk sesi tanpa `presetId`.
 - `novel` memakai lensa plot, character, world, prose, dan pacing; peran Ketua/Peninjau; verdict SIAP/PERLU REVISI/TERTAHAN; laporan naratif bahasa Indonesia.
-- `translate` memakai task terjemahan EN→ID, folder hasil default `translated/id`, satu penerjemah per bab, dan lensa QA fidelity/naturalness/terminology/consistency/format.
+- `translate` memakai task terjemahan EN→ID, folder hasil default `translated/id`, format hasil default `.txt` (bisa diganti `.md` per sesi), satu penerjemah per bab, dan lensa QA fidelity/naturalness/terminology/consistency/format.
 - Preset custom dimuat dari `$PASEO_HOME/plugin-data/review-team/presets.json`, divalidasi per entri, dan entri invalid dibuang dengan peringatan di panel. ID `code`, `novel`, dan `translate` dicadangkan.
 - Naskah (sumber dan hasil) harus berada di workspace sebagai teks/Markdown. Plugin tidak mengakses D1 Novelin.
 - Kunci JSON, marker, dan enum verdict tetap bahasa Inggris agar parser dan sesi lama tetap kompatibel.

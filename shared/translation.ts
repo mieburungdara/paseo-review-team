@@ -2,6 +2,14 @@ import { MAX_UNIT_LENGTH } from "./constants";
 
 export type OutputStatus = "unverified" | "present" | "missing" | "outside" | "unsafe";
 
+export const OUTPUT_EXTENSION_PATTERN = /^\.[a-z0-9]{1,10}$/i;
+export const OUTPUT_EXTENSION_OPTIONS = [".txt", ".md"] as const;
+
+export function normalizeOutputExtension(input: string | null | undefined): string | null {
+  const value = input?.trim();
+  return value && OUTPUT_EXTENSION_PATTERN.test(value) ? value : null;
+}
+
 const OUTPUT_STATUS_LABELS: Record<OutputStatus, string> = {
   unverified: "Belum diverifikasi",
   present: "Berkas ada",
